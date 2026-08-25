@@ -22,7 +22,7 @@ cache/
 logs/
 output/
 build/
-credentials/
+/credentials/
 master.key
 credentials.enc.json
 *.sqlite
