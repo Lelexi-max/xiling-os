@@ -18,7 +18,7 @@
     "smoke:web": "pnpm --filter @xiling/web build",
     "smoke:runner": "python3 services/runner/smoke.py",
     "compliance": "node scripts/compliance.mjs",
-    "sbom": "node scripts/compliance.mjs --write-sbom",
+    "sbom:generate": "node scripts/compliance.mjs --write-sbom",
     "docs:check": "node scripts/design-doc-check.mjs",
     "architecture": "node scripts/architecture-check.mjs && pnpm docs:check",
     "pi:compat": "node scripts/pi-compatibility-check.mjs && pnpm --filter @xiling/pi-runtime typecheck && pnpm exec vitest run packages/pi-runtime/src/index.test.ts packages/pi-runtime/src/harness-spike.test.ts",

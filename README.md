@@ -58,6 +58,6 @@
 - [活设计文档](DESIGN.md)
 - [第三方声明](THIRD_PARTY_NOTICES.md)
 - `pnpm check`：架构、Pi 兼容、类型、测试与 smoke 总门禁。
-- `pnpm compliance && pnpm sbom`：许可证检查与 SPDX 2.3 SBOM。
+- `pnpm compliance && pnpm sbom:generate`：许可证检查与 SPDX 2.3 SBOM。
 
 当前 GitHub 版本是开发阶段 Beta 候选，不应被视为已完成真实 Windows 11/WSL2 专机验收或正式 WinGet/签名安装包发布。

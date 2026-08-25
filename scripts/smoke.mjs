@@ -15,7 +15,10 @@ const commands = [
 ];
 
 for (const [command, args] of commands) {
-  const result = spawnSync(command, args, { stdio: "inherit", shell: false });
+  const useCurrentPnpm = command === "pnpm" && process.env.npm_execpath;
+  const executable = useCurrentPnpm ? process.execPath : command;
+  const executableArgs = useCurrentPnpm ? [process.env.npm_execpath, ...args] : args;
+  const result = spawnSync(executable, executableArgs, { stdio: "inherit", shell: false });
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
