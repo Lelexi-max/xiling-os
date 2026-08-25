@@ -42,7 +42,9 @@ async function runAgentTurn(app: TestApp, input: { projectId: string; sessionId:
 
 describe("server vertical slice", () => {
   it("reports health and projects only explicit canvas context", async () => {
-    const app = createApp();
+    const webRoot = await mkdtemp(join(tmpdir(), "xiling-web-fixture-"));
+    await writeFile(join(webRoot, "index.html"), "<!doctype html><title>汐灵 OS</title>");
+    const app = createApp({ webRoot });
     const web = await app.inject({ method: "GET", url: "/" });
     expect(web.statusCode).toBe(200);
     expect(web.body).toContain("汐灵 OS");

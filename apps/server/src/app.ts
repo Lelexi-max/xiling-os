@@ -36,10 +36,10 @@ import { projectAgentWorkflowDraft, reconcileAgentWorkflowDrafts } from "./agent
 import { McpSettingsService } from "./modules/mcp/mcp-service.js";
 import { registerMcpSettingsRoutes } from "./modules/mcp/routes.js";
 
-export function createApp(options: { research?: Gate3ResearchService; dataRoot?: string; literatureFetch?: typeof fetch; literatureSleep?: (ms: number, signal?: AbortSignal) => Promise<void>; connectorProbe?: ConnectorMetadataProbe; connectorDownloader?: ConnectorDownloader; connectorMode?: "fixture" | "live"; projectAnalysisRunner?: ProjectAnalysisRunner } = {}) {
+export function createApp(options: { research?: Gate3ResearchService; dataRoot?: string; webRoot?: string; literatureFetch?: typeof fetch; literatureSleep?: (ms: number, signal?: AbortSignal) => Promise<void>; connectorProbe?: ConnectorMetadataProbe; connectorDownloader?: ConnectorDownloader; connectorMode?: "fixture" | "live"; projectAnalysisRunner?: ProjectAnalysisRunner } = {}) {
   const app = Fastify({ logger: false });
   void app.register(cors, { origin: /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/ });
-  const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
+  const webRoot = options.webRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
   void app.register(fastifyStatic, { root: webRoot, wildcard: false });
   const dataRoot = options.dataRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../../data");
   const gate3Root = resolve(dataRoot, "gate3");
