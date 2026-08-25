@@ -1,0 +1,302 @@
+import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { and, asc, desc, eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-sqlite";
+import type { CanvasBranchContext, ChatMessageRecord, ChatSessionSummary, ContextCapsule, EvidenceRecord, Gate4Project, PaperRecord, ProjectItem, ProjectItemKind, ProjectItemStatus, ProjectStatus, ResourceUri, WikiPageDetail, WikiPageRevision, WikiPageSummary, WikiSearchResult } from "@xiling/contracts";
+import { chatMessages, chatSessionContexts, chatSessions, contextCapsules, evidence, projectItems, projects, wikiPages, wikiRevisions } from "./schema.js";
+import { runKnowledgeMigrations } from "./migrations.js";
+import type { KnowledgeStore } from "./ports.js";
+
+const DEFAULT_PROJECT_ID = "ocean-heatwave";
+const now = () => new Date().toISOString();
+
+function slugify(title: string): string {
+  return title.trim().toLocaleLowerCase().replace(/\s+/g, "-").replace(/[^\p{L}\p{N}-]+/gu, "").replace(/-+/g, "-") || `page-${randomUUID().slice(0, 8)}`;
+}
+
+function projectFromRow(row: typeof projects.$inferSelect): Gate4Project {
+  return { ...row, status: row.status as ProjectStatus };
+}
+
+function itemFromRow(row: typeof projectItems.$inferSelect): ProjectItem {
+  return { ...row, kind: row.kind as ProjectItemKind, status: row.status as ProjectItemStatus };
+}
+
+function revisionFromRow(row: typeof wikiRevisions.$inferSelect): WikiPageRevision {
+  return { ...row, artifactUris: JSON.parse(row.artifactUris) as ResourceUri[] };
+}
+
+export class KnowledgeService implements KnowledgeStore {
+  private readonly sqlite: DatabaseSync;
+  private readonly db;
+
+  constructor(path: string) {
+    mkdirSync(dirname(path), { recursive: true });
+    this.sqlite = new DatabaseSync(path);
+    this.sqlite.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+    runKnowledgeMigrations(this.sqlite);
+    this.db = drizzle({ client: this.sqlite });
+    this.seed();
+  }
+
+  close(): void { this.sqlite.close(); }
+
+  listProjects(): Gate4Project[] {
+    return this.db.select().from(projects).orderBy(desc(projects.updatedAt)).all().map(projectFromRow);
+  }
+
+  getProject(id: string): Gate4Project | undefined {
+    const row = this.db.select().from(projects).where(eq(projects.id, id)).get();
+    return row ? projectFromRow(row) : undefined;
+  }
+
+  createProject(input: { name: string; description: string; researchQuestion: string }): Gate4Project {
+    const timestamp = now();
+    const value: typeof projects.$inferInsert = { id: randomUUID(), ...input, status: "active", createdAt: timestamp, updatedAt: timestamp };
+    this.db.insert(projects).values(value).run();
+    return projectFromRow(value as typeof projects.$inferSelect);
+  }
+
+  updateProject(id: string, patch: Partial<Pick<Gate4Project, "name" | "description" | "researchQuestion" | "status">>): Gate4Project | undefined {
+    this.db.update(projects).set({ ...patch, updatedAt: now() }).where(eq(projects.id, id)).run();
+    const row = this.db.select().from(projects).where(eq(projects.id, id)).get();
+    return row ? projectFromRow(row) : undefined;
+  }
+
+  listItems(projectId: string): ProjectItem[] {
+    return this.db.select().from(projectItems).where(eq(projectItems.projectId, projectId)).orderBy(asc(projectItems.createdAt)).all().map(itemFromRow);
+  }
+
+  createItem(projectId: string, input: { kind: ProjectItemKind; title: string; notes: string }): ProjectItem {
+    const timestamp = now();
+    const value: typeof projectItems.$inferInsert = { id: randomUUID(), projectId, ...input, status: "backlog", createdAt: timestamp, updatedAt: timestamp };
+    this.db.insert(projectItems).values(value).run();
+    return itemFromRow(value as typeof projectItems.$inferSelect);
+  }
+
+  updateItem(id: string, patch: Partial<Pick<ProjectItem, "title" | "notes" | "status">>): ProjectItem | undefined {
+    this.db.update(projectItems).set({ ...patch, updatedAt: now() }).where(eq(projectItems.id, id)).run();
+    const row = this.db.select().from(projectItems).where(eq(projectItems.id, id)).get();
+    return row ? itemFromRow(row) : undefined;
+  }
+
+  deleteItem(id: string): boolean {
+    return this.db.delete(projectItems).where(eq(projectItems.id, id)).run().changes > 0;
+  }
+
+  listChatSessions(projectId: string): ChatSessionSummary[] {
+    return this.db.select().from(chatSessions).where(and(eq(chatSessions.projectId, projectId), eq(chatSessions.archived, false))).orderBy(desc(chatSessions.updatedAt)).all().map((session) => {
+      const messages = this.db.select().from(chatMessages).where(eq(chatMessages.sessionId, session.id)).orderBy(asc(chatMessages.createdAt)).all();
+      const last = messages.at(-1);
+      const canvasContext = this.getChatSessionContext(session.id);
+      return { id: session.id, projectId: session.projectId, title: session.title, preview: last?.text.slice(0, 120) ?? "", messageCount: messages.length, ...(canvasContext ? { canvasContext } : {}), createdAt: session.createdAt, updatedAt: session.updatedAt };
+    });
+  }
+
+  createChatSession(projectId: string, title: string): ChatSessionSummary {
+    const timestamp = now();
+    const value: typeof chatSessions.$inferInsert = { id: randomUUID(), projectId, title: title.trim() || "新对话", archived: false, createdAt: timestamp, updatedAt: timestamp };
+    this.db.insert(chatSessions).values(value).run();
+    return { id: value.id, projectId, title: value.title, preview: "", messageCount: 0, createdAt: timestamp, updatedAt: timestamp };
+  }
+
+  getChatSession(id: string): ChatSessionSummary | undefined {
+    const session = this.db.select().from(chatSessions).where(and(eq(chatSessions.id, id), eq(chatSessions.archived, false))).get();
+    if (!session) return undefined;
+    return this.listChatSessions(session.projectId).find((item) => item.id === id);
+  }
+
+  archiveChatSession(id: string): boolean {
+    return this.db.update(chatSessions).set({ archived: true, updatedAt: now() }).where(eq(chatSessions.id, id)).run().changes > 0;
+  }
+
+  listChatMessages(sessionId: string): ChatMessageRecord[] {
+    return this.db.select().from(chatMessages).where(eq(chatMessages.sessionId, sessionId)).orderBy(asc(chatMessages.createdAt)).all().map((message) => ({ ...message, role: message.role as ChatMessageRecord["role"], status: message.status as ChatMessageRecord["status"] }));
+  }
+
+  appendChatMessage(sessionId: string, input: Pick<ChatMessageRecord, "role" | "text" | "status">): ChatMessageRecord {
+    const createdAt = now();
+    const value: typeof chatMessages.$inferInsert = { id: randomUUID(), sessionId, ...input, createdAt };
+    this.db.insert(chatMessages).values(value).run();
+    this.db.update(chatSessions).set({ updatedAt: createdAt }).where(eq(chatSessions.id, sessionId)).run();
+    return { ...value, role: input.role, status: input.status };
+  }
+
+  getChatSessionContext(sessionId: string): CanvasBranchContext | undefined {
+    const session = this.db.select().from(chatSessions).where(and(eq(chatSessions.id, sessionId), eq(chatSessions.archived, false))).get();
+    if (!session) return undefined;
+    const row = this.db.select().from(chatSessionContexts).where(eq(chatSessionContexts.sessionId, sessionId)).get();
+    if (!row) return undefined;
+    const parsed = JSON.parse(row.quotedNodeIds) as unknown;
+    return { projectId: session.projectId, activeNodeId: row.activeNodeId, quotedNodeIds: Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [], updatedAt: row.updatedAt };
+  }
+
+  setChatSessionContext(sessionId: string, context: Omit<CanvasBranchContext, "updatedAt">): CanvasBranchContext {
+    const session = this.db.select().from(chatSessions).where(and(eq(chatSessions.id, sessionId), eq(chatSessions.archived, false))).get();
+    if (!session || session.projectId !== context.projectId) throw new Error("Chat session context project mismatch");
+    const updatedAt = now();
+    this.db.insert(chatSessionContexts).values({ sessionId, activeNodeId: context.activeNodeId, quotedNodeIds: JSON.stringify([...new Set(context.quotedNodeIds)]), updatedAt }).onConflictDoUpdate({ target: chatSessionContexts.sessionId, set: { activeNodeId: context.activeNodeId, quotedNodeIds: JSON.stringify([...new Set(context.quotedNodeIds)]), updatedAt } }).run();
+    this.db.update(chatSessions).set({ updatedAt }).where(eq(chatSessions.id, sessionId)).run();
+    return { ...context, quotedNodeIds: [...new Set(context.quotedNodeIds)], updatedAt };
+  }
+
+  listContextCapsules(projectId: string): ContextCapsule[] {
+    return this.db.select().from(contextCapsules).where(eq(contextCapsules.projectId, projectId)).all().map((row) => ({
+      id: row.id,
+      sourceNodeId: row.sourceNodeId,
+      sourceRevision: row.sourceRevision,
+      summary: row.summary,
+      claims: JSON.parse(row.claims) as string[],
+      artifactUris: JSON.parse(row.artifactUris) as ResourceUri[],
+      layer: row.layer as "node" | "branch",
+      coveredNodeIds: JSON.parse(row.coveredNodeIds) as string[],
+      updatedAt: row.updatedAt,
+    }));
+  }
+
+  upsertContextCapsule(projectId: string, capsule: ContextCapsule): ContextCapsule {
+    const updatedAt = now();
+    const value: typeof contextCapsules.$inferInsert = {
+      id: capsule.id,
+      projectId,
+      sourceNodeId: capsule.sourceNodeId,
+      layer: capsule.layer ?? "node",
+      sourceRevision: capsule.sourceRevision,
+      summary: capsule.summary,
+      claims: JSON.stringify(capsule.claims),
+      artifactUris: JSON.stringify(capsule.artifactUris),
+      coveredNodeIds: JSON.stringify(capsule.coveredNodeIds ?? [capsule.sourceNodeId]),
+      updatedAt,
+    };
+    this.db.insert(contextCapsules).values(value).onConflictDoUpdate({ target: contextCapsules.id, set: value }).run();
+    return { ...capsule, layer: capsule.layer ?? "node", coveredNodeIds: capsule.coveredNodeIds ?? [capsule.sourceNodeId], updatedAt };
+  }
+
+  pruneContextCapsules(projectId: string, validNodeIds: string[]): number {
+    const valid = new Set(validNodeIds);
+    let changes = 0;
+    for (const capsule of this.listContextCapsules(projectId)) {
+      const covered = capsule.coveredNodeIds ?? [capsule.sourceNodeId];
+      if (covered.some((id) => !valid.has(id))) changes += Number(this.db.delete(contextCapsules).where(eq(contextCapsules.id, capsule.id)).run().changes);
+    }
+    return changes;
+  }
+
+  listWikiPages(projectId = DEFAULT_PROJECT_ID): WikiPageSummary[] {
+    return this.db.select().from(wikiPages).where(and(eq(wikiPages.projectId, projectId), eq(wikiPages.archived, false))).orderBy(desc(wikiPages.updatedAt)).all().map((page) => ({
+      id: page.id, projectId: page.projectId, slug: page.slug, title: page.title,
+      revisionCount: this.db.select().from(wikiRevisions).where(eq(wikiRevisions.pageId, page.id)).all().length,
+      updatedAt: page.updatedAt,
+    }));
+  }
+
+  searchWikiPages(projectId: string, query: string, limit = 20): WikiSearchResult[] {
+    const needle = query.trim().slice(0, 160);
+    if (!needle) return [];
+    const escaped = needle.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+    const pattern = `%${escaped}%`;
+    const rows = this.sqlite.prepare(`
+      SELECT p.id AS page_id, p.slug, p.title, p.updated_at, r.version, r.markdown
+      FROM wiki_pages p
+      JOIN wiki_revisions r ON r.page_id = p.id
+      WHERE p.project_id = ? AND p.archived = 0
+        AND r.version = (SELECT MAX(latest.version) FROM wiki_revisions latest WHERE latest.page_id = p.id)
+        AND (p.title LIKE ? ESCAPE '\\' OR r.markdown LIKE ? ESCAPE '\\')
+      ORDER BY p.updated_at DESC
+      LIMIT ?
+    `).all(projectId, pattern, pattern, Math.max(1, Math.min(limit, 50))) as Array<{ page_id: string; slug: string; title: string; updated_at: string; version: number; markdown: string }>;
+    const normalizedNeedle = needle.toLocaleLowerCase();
+    return rows.map((row) => {
+      const flat = row.markdown.replace(/^#\s+.*$/m, "").replace(/\s+/g, " ").trim();
+      const hit = flat.toLocaleLowerCase().indexOf(normalizedNeedle);
+      const start = Math.max(0, hit < 0 ? 0 : hit - 70);
+      const excerpt = `${start > 0 ? "…" : ""}${flat.slice(start, start + 220)}${flat.length > start + 220 ? "…" : ""}`;
+      return { pageId: row.page_id, slug: row.slug, title: row.title, excerpt, version: row.version, updatedAt: row.updated_at };
+    });
+  }
+
+  createWikiPage(input: { projectId?: string; title: string; markdown: string; artifactUris?: ResourceUri[] }): WikiPageDetail {
+    const timestamp = now();
+    const page = { id: randomUUID(), projectId: input.projectId ?? DEFAULT_PROJECT_ID, slug: slugify(input.title), title: input.title, archived: false, createdAt: timestamp, updatedAt: timestamp };
+    this.sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.insert(wikiPages).values(page).run();
+      this.insertRevision(page.id, 1, input.markdown, input.artifactUris ?? [], timestamp, page.title);
+      this.sqlite.exec("COMMIT");
+    } catch (error) { this.sqlite.exec("ROLLBACK"); throw error; }
+    return this.getWikiPage(page.id)!;
+  }
+
+  getWikiPage(id: string): WikiPageDetail | undefined {
+    const page = this.db.select().from(wikiPages).where(and(eq(wikiPages.id, id), eq(wikiPages.archived, false))).get();
+    if (!page) return undefined;
+    const revisions = this.db.select().from(wikiRevisions).where(eq(wikiRevisions.pageId, id)).orderBy(desc(wikiRevisions.version)).all().map(revisionFromRow);
+    const backlinks = this.listWikiPages(page.projectId).filter((candidate) => candidate.id !== id).filter((candidate) => {
+      const revision = this.db.select().from(wikiRevisions).where(eq(wikiRevisions.pageId, candidate.id)).orderBy(desc(wikiRevisions.version)).get();
+      return revision?.markdown.includes(`[[${page.slug}]]`);
+    }).map(({ id: backlinkId, slug, title }) => ({ id: backlinkId, slug, title }));
+    return { id: page.id, projectId: page.projectId, slug: page.slug, title: page.title, revisionCount: revisions.length, updatedAt: page.updatedAt, currentRevision: revisions[0]!, revisions, backlinks };
+  }
+
+  reviseWikiPage(id: string, input: { markdown: string; artifactUris?: ResourceUri[]; title?: string }): WikiPageDetail | undefined {
+    const page = this.db.select().from(wikiPages).where(eq(wikiPages.id, id)).get();
+    if (!page || page.archived) return undefined;
+    const latest = this.db.select().from(wikiRevisions).where(eq(wikiRevisions.pageId, id)).orderBy(desc(wikiRevisions.version)).get();
+    const timestamp = now();
+    const title = input.title ?? page.title;
+    this.sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.update(wikiPages).set({ title, updatedAt: timestamp }).where(eq(wikiPages.id, id)).run();
+      this.insertRevision(id, (latest?.version ?? 0) + 1, input.markdown, input.artifactUris ?? [], timestamp, title);
+      this.sqlite.exec("COMMIT");
+    } catch (error) { this.sqlite.exec("ROLLBACK"); throw error; }
+    return this.getWikiPage(id);
+  }
+
+  restoreWikiRevision(id: string, version: number): WikiPageDetail | undefined {
+    const page = this.db.select().from(wikiPages).where(and(eq(wikiPages.id, id), eq(wikiPages.archived, false))).get();
+    if (!page) return undefined;
+    const revision = this.db.select().from(wikiRevisions).where(and(eq(wikiRevisions.pageId, id), eq(wikiRevisions.version, version))).get();
+    if (!revision) return undefined;
+    return this.reviseWikiPage(id, { markdown: revision.markdown, artifactUris: JSON.parse(revision.artifactUris) as ResourceUri[] });
+  }
+
+  archiveWikiPage(id: string): boolean {
+    return this.db.update(wikiPages).set({ archived: true, updatedAt: now() }).where(eq(wikiPages.id, id)).run().changes > 0;
+  }
+
+  saveEvidence(projectId: string, paper: PaperRecord, note = ""): EvidenceRecord {
+    const existing = this.db.select().from(evidence).where(and(eq(evidence.projectId, projectId), eq(evidence.paperId, paper.id))).get();
+    if (existing) return this.evidenceFromRow(existing);
+    const value: typeof evidence.$inferInsert = { id: randomUUID(), projectId, paperId: paper.id, paperJson: JSON.stringify(paper), note, createdAt: now() };
+    this.db.insert(evidence).values(value).run();
+    return this.evidenceFromRow(value as typeof evidence.$inferSelect);
+  }
+
+  listEvidence(projectId = DEFAULT_PROJECT_ID): EvidenceRecord[] {
+    return this.db.select().from(evidence).where(eq(evidence.projectId, projectId)).orderBy(desc(evidence.createdAt)).all().map((row) => this.evidenceFromRow(row));
+  }
+
+  private evidenceFromRow(row: typeof evidence.$inferSelect): EvidenceRecord {
+    return { id: row.id, projectId: row.projectId, paper: JSON.parse(row.paperJson) as PaperRecord, note: row.note, createdAt: row.createdAt };
+  }
+
+  private insertRevision(pageId: string, version: number, markdown: string, artifactUris: ResourceUri[], createdAt: string, title: string): void {
+    this.db.insert(wikiRevisions).values({ id: randomUUID(), pageId, version, markdown, artifactUris: JSON.stringify(artifactUris), createdAt }).run();
+    this.sqlite.prepare("INSERT INTO wiki_search(page_id, title, markdown) VALUES (?, ?, ?)").run(pageId, title, markdown);
+  }
+
+  private seed(): void {
+    if (this.db.select().from(projects).get()) return;
+    const timestamp = now();
+    this.db.insert(projects).values({ id: DEFAULT_PROJECT_ID, name: "西北太平洋海洋热浪", description: "机制与 Argo 观测验证", researchQuestion: "上层海洋层结是否放大了 2023 年海洋热浪？", status: "active", createdAt: timestamp, updatedAt: timestamp }).run();
+    this.createItem(DEFAULT_PROJECT_ID, { kind: "milestone", title: "完成物理海洋科研闭环", notes: "数据切片、容器计算、Reviewer 与复现" });
+    const method = this.createWikiPage({ title: "数据与方法", markdown: "# 数据与方法\n\n使用 Argo 温盐剖面验证混合层深度异常。" });
+    this.createWikiPage({ title: "研究总览", markdown: `# 研究总览\n\n当前研究连接到 [[${method.slug}]]。` });
+  }
+}
+
+export type { AgentKnowledgeReader, ContextCapsuleStore, ConversationStore, EvidenceStore, KnowledgeStore, ProjectItemStore, ProjectStore, WikiStore } from "./ports.js";
+export { KNOWLEDGE_SCHEMA_VERSION, runKnowledgeMigrations } from "./migrations.js";

@@ -1,0 +1,34 @@
+[
+  {
+    "name": "artifact-inspection",
+    "description": "需要检查图表元数据、Reviewer 报告、RO-Crate、CSV 或运行日志时使用。",
+    "version": "1.0.0",
+    "path": "artifact-inspection",
+    "keywords": ["artifact", "产物", "图表", "审阅报告", "运行日志", "ro-crate"],
+    "capabilityIds": ["artifact.read"]
+  },
+  {
+    "name": "literature-evidence",
+    "description": "检索、比较和引用海洋科学论文时使用；强调来源、证据边界与不确定性。",
+    "version": "1.0.0",
+    "path": "literature-evidence",
+    "keywords": ["文献", "论文", "引用", "literature", "paper", "citation"],
+    "capabilityIds": ["literature.search"]
+  },
+  {
+    "name": "project-wiki-navigation",
+    "description": "需要从项目 Wiki 找到结论、产物、工具、图表或证据时使用。",
+    "version": "1.0.0",
+    "path": "project-wiki-navigation",
+    "keywords": ["wiki", "知识库", "研究记录", "已有结论"],
+    "capabilityIds": ["wiki.read"]
+  },
+  {
+    "name": "ocean-data-subsetting",
+    "description": "规划海洋数据变量、区域、深度、时间和输出格式时使用。",
+    "version": "1.0.0",
+    "path": "ocean-data-subsetting",
+    "keywords": ["argo", "erddap", "copernicus", "nasa", "netcdf", "切片", "海洋数据"],
+    "capabilityIds": ["ocean.subset.plan"]
+  }
+]

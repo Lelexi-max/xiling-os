@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>汐灵 OS · Gate 1 原型</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="canvas.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">汐</span><div><strong>汐灵 OS</strong><small>Ocean Research Workspace</small></div></div>
+      <nav aria-label="主导航">
+        <button class="nav-item active" data-view="chat">◌ <span>科研对话</span></button>
+        <button class="nav-item" data-view="canvas">⌁ <span>科研画布</span></button>
+        <button class="nav-item" data-view="project">✓ <span>项目管理</span></button>
+        <button class="nav-item" data-view="wiki">▤ <span>项目 Wiki</span></button>
+        <button class="nav-item" data-view="literature">◎ <span>文献图谱</span></button>
+      </nav>
+      <div class="project-card"><small>当前项目</small><strong>北极海冰边缘区 SST 异常</strong><span><i></i> 本地工作区</span></div>
+      <button class="system-status" id="systemStatus"><span>Windows / WSL2</span><b>运行正常</b></button>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div><small>研究问题</small><strong>海冰退缩是否改变了边缘区夏季海温异常？</strong></div>
+        <div class="budget"><span>上下文：当前分支 + 2 个引用</span><span>缓存复用 78%</span><button id="approvalButton">1 项待确认</button></div>
+      </header>
+
+      <section class="view active" id="chat">
+        <div class="view-title"><div><small>CHAT</small><h1>从问题到可复现证据</h1></div><button class="secondary">分叉会话</button></div>
+        <div class="chat-layout">
+          <div class="timeline">
+            <article class="message user"><small>你</small><p>使用 2018–2024 年夏季数据，比较楚科奇海海冰边缘区的海表温度异常，并给出可复现图表。</p></article>
+            <article class="message agent"><small>汐灵 · 规划</small><p>我会先检索数据元信息，不下载原始数据。建议使用 NOAA ERDDAP 的 SST 与海冰浓度产品，按时间和区域切片后在本地容器计算。</p>
+              <div class="plan-grid"><span>区域<br><b>160°E–140°W</b></span><span>时间<br><b>2018–2024 JJA</b></span><span>预计下载<br><b>1.8 GB → 96 MB</b></span></div>
+            </article>
+            <article class="tool-card"><div><span class="pulse"></span><b>数据切片计划等待确认</b></div><p>联网访问 ERDDAP · 写入项目数据集 · 预计运行 4 分钟</p><button class="primary approval-trigger">查看并确认</button></article>
+            <article class="artifact-row"><div class="mini-chart"><i></i><i></i><i></i><i></i><i></i><i></i></div><div><small>预期产物</small><b>SST anomaly map + regional mean.csv</b><span>代码、环境、输入哈希与 RO-Crate 将一并保存</span></div></article>
+          </div>
+          <aside class="inspector"><small>本轮上下文投影</small><h3>沿任务关系自然收敛</h3><ul><li><b>当前对话分支</b><span>5 个节点</span></li><li><b>显式引用</b><span>2 个节点</span></li><li><b>历史分支胶囊</b><span>复用 1 个</span></li><li><b>Artifact payload</b><span>按需读取</span></li><li class="muted"><b>其他画布与能力</b><span>未装载</span></li></ul><div class="context-health"><b>78%</b><span>提示缓存复用</span></div></aside>
+        </div>
+      </section>
+
+      <section class="view" id="canvas">
+        <div class="canvas-stage">
+          <div class="canvas-toolbar">
+            <strong>海冰边缘区 SST 探索</strong>
+            <span></span>
+            <button title="搜索节点">⌕ 搜索</button>
+            <button id="freeNodeButton">＋ 自由节点</button>
+            <button id="organizeButton">整理</button>
+            <button title="缩放">−　72%　＋</button>
+          </div>
+
+          <div class="thread-edge edge-root"></div>
+          <div class="thread-edge edge-lit"></div>
+          <div class="thread-edge edge-data"></div>
+          <div class="thread-edge edge-evidence"></div>
+          <div class="thread-edge edge-run"></div>
+
+          <article class="canvas-node input-node" data-node="研究问题" style="left:5%;top:31%">
+            <header><small>你的输入</small><button>•••</button></header>
+            <p>海冰退缩是否改变了楚科奇海边缘区的夏季海温异常？</p>
+            <footer><span>根节点</span><button class="follow-node">↳ 继续</button><button class="quote-node">＋ 引用</button></footer>
+          </article>
+
+          <article class="canvas-node response-node selected" data-node="研究拆解" style="left:28%;top:25%">
+            <header><small>汐灵 · 研究拆解</small><button>•••</button></header>
+            <p>这个问题需要同时验证物理机制、数据一致性和统计稳健性。我建议从两条分支并行推进：</p>
+            <ol><li>文献分支：确认海冰边缘和海温异常的已知机制。</li><li>数据分支：比较 SST 与海冰浓度的时空协变。</li></ol>
+            <div class="node-context"><span>使用：问题节点</span><span>项目简报胶囊</span></div>
+            <footer><span>Claude · 1m 12s</span><button class="follow-node">↳ 继续</button><button class="quote-node">＋ 引用</button></footer>
+          </article>
+
+          <article class="canvas-node branch-node literature-branch quoted" data-node="文献机制" style="left:55%;top:7%">
+            <header><small>分支 A · 文献</small><button>•••</button></header>
+            <h3>海冰—海温反馈机制</h3>
+            <p>检索到 38 篇局部网络论文。早期工作强调反照率反馈，近年研究更关注混合层和热量平流。</p>
+            <div class="source-pills"><span>Steele 2008</span><span>Timmermans 2022</span></div>
+            <footer><span>已引用到 Composer</span><button class="follow-node">↳ 深挖</button><button class="quote-node active">✓ 已引用</button></footer>
+          </article>
+
+          <article class="canvas-node branch-node data-branch quoted" data-node="数据方案" style="left:55%;top:49%">
+            <header><small>分支 B · 数据</small><button>•••</button></header>
+            <h3>两套可比较的数据方案</h3>
+            <p><b>方案 1</b> NOAA OISST + NSIDC<br><b>方案 2</b> ERA5 SST + OSI SAF</p>
+            <div class="node-context"><span>仅元数据</span><span>未下载原始数据</span></div>
+            <footer><span>已引用到 Composer</span><button class="follow-node">↳ 比较</button><button class="quote-node active">✓ 已引用</button></footer>
+          </article>
+
+          <div class="recipe-checkpoint" style="left:77%;top:24%"><button title="从这里重建">↻</button><span>综合两条分支</span></div>
+
+          <article class="canvas-node recipe-node" data-node="分析 Recipe" style="left:80%;top:8%">
+            <header><small>Agent Recipe · 草案</small><button>暂停</button></header>
+            <h3>验证海冰退缩与 SST 异常</h3>
+            <ul><li class="done">检索证据与数据目录</li><li>统一区域、网格与夏季定义</li><li>计算异常和滞后相关</li><li>Reviewer 检查稳健性</li></ul>
+            <footer><span>动态计划</span><button class="approval-trigger">开始执行</button></footer>
+          </article>
+
+          <article class="canvas-node free-node" data-node="手工假设" style="left:13%;top:70%">
+            <header><small>自由节点 · 手工笔记</small><button>•••</button></header>
+            <p>注意区分局地吸热与太平洋暖水平流的贡献。</p>
+            <footer><span>不自动进入上下文</span><button class="quote-node">＋ 引用</button></footer>
+          </article>
+
+          <aside class="canvas-detail">
+            <small>当前节点</small><h3>研究拆解</h3><p>点击任意节点查看全文、使用的 Context Capsule、证据与 provenance。</p>
+            <dl><dt>上下文来源</dt><dd>祖先分支 1 · 胶囊 1</dd><dt>兄弟分支</dt><dd>未载入</dd><dt>可继续</dt><dd>Follow-up / Quote</dd></dl>
+          </aside>
+
+          <div class="canvas-composer">
+            <div class="mode-switch"><button class="active" data-mode="follow">Follow-up</button><button data-mode="quote">Quote</button></div>
+            <div class="quote-tray"><span>文献机制 ×</span><span>数据方案 ×</span></div>
+            <div class="composer-row"><textarea aria-label="画布提示词">综合这两条分支，设计一个可以区分局地吸热和平流贡献的分析方案</textarea><button class="batch-button">×1</button><button class="send-canvas">↑</button></div>
+            <small>只发送所选节点、最小依赖与已缓存分支胶囊</small>
+          </div>
+
+          <div class="canvas-hint">空格拖动画布 · 滚轮缩放 · 点击节点 Follow-up · Quote 可跨分支组合</div>
+        </div>
+      </section>
+
+      <section class="view" id="project">
+        <div class="view-title"><div><small>PROJECT</small><h1>研究进度与实验记录</h1></div><button class="primary">新建实验</button></div>
+        <div class="metrics"><div><small>里程碑</small><b>2 / 5</b><span>下一项：数据质量检查</span></div><div><small>实验</small><b>6</b><span>1 项等待审查</span></div><div><small>Artifact</small><b>23</b><span>全部可追溯</span></div></div>
+        <div class="board"><div><h3>待处理 <span>3</span></h3><article><b>确认 SST 数据产品</b><small>数据 · 今天</small></article><article><b>定义海冰边缘阈值</b><small>方法 · 高优先级</small></article></div><div><h3>进行中 <span>2</span></h3><article class="accent"><b>2018–2024 夏季异常</b><small>实验 · 等待审批</small></article><article><b>文献证据整理</b><small>Wiki · 8 篇论文</small></article></div><div><h3>已完成 <span>4</span></h3><article><b>研究区域定义</b><small>决策已记录</small></article><article><b>变量单位统一</b><small>测试已通过</small></article></div></div>
+      </section>
+
+      <section class="view" id="wiki">
+        <div class="view-title"><div><small>WIKI</small><h1>项目知识与证据</h1></div><button class="primary">新建页面</button></div>
+        <div class="wiki-layout"><aside><input value="搜索项目 Wiki" aria-label="搜索项目 Wiki"><b>研究设计</b><button class="selected">研究问题</button><button>数据与质量控制</button><b>分析</b><button>实验记录</button><button>初步结果</button><b>写作</b><button>论文大纲</button></aside><article><small>研究设计 / 研究问题</small><h2>海冰边缘区海温异常</h2><p>本研究关注 2018–2024 年楚科奇海夏季海冰退缩与海表温度异常的协同变化。</p><blockquote>当前假设：海冰边缘向北退缩会延长开阔水面吸热时间，并使局地 SST 正异常增强。</blockquote><h3>证据要求</h3><ul><li>海冰浓度阈值定义必须记录来源。</li><li>SST 与海冰数据需统一时间分辨率和网格。</li><li>每个定量结论必须链接到 Run 或论文证据。</li></ul><div class="draft-note"><b>Agent 建议更新</b><span>发现 2 条相关证据，等待差异确认</span></div></article><aside class="backlinks"><small>双向链接</small><a>[[数据与质量控制]]</a><a>[[实验 #006]]</a><small>引用</small><a>Steele et al., 2008</a><a>Timmermans et al., 2022</a></aside></div>
+      </section>
+
+      <section class="view" id="literature">
+        <div class="view-title"><div><small>LITERATURE</small><h1>从种子论文探索研究脉络</h1></div><button class="secondary">导入 DOI</button></div>
+        <div class="literature-layout"><aside><input value="Arctic sea ice SST anomaly" aria-label="搜索论文"><div class="paper selected"><b>Arctic Ocean surface warming trends</b><small>Timmermans · 2022</small></div><div class="paper"><b>Sea ice retreat and ocean heat uptake</b><small>Steele · 2008</small></div><div class="paper"><b>Chukchi shelf variability</b><small>Woodgate · 2018</small></div></aside><div class="graph"><span class="dot seed" style="left:48%;top:44%">2022</span><span class="dot old" style="left:23%;top:28%">2008</span><span class="dot" style="left:68%;top:20%">2018</span><span class="dot pale" style="left:75%;top:62%">2024</span><span class="dot small" style="left:30%;top:70%">2015</span><i class="edge e1"></i><i class="edge e2"></i><i class="edge e3"></i><i class="edge e4"></i><div class="legend">● 种子论文　● 较早　━ 相似　┄ 引用</div></div><aside class="paper-detail"><small>种子论文</small><h3>Arctic Ocean surface warming trends</h3><p>局部网络 38 篇 · 引用 114 次</p><dl><dt>关系</dt><dd>推荐相似 + 书目耦合</dd><dt>数据源</dt><dd>Semantic Scholar</dd><dt>获取时间</dt><dd>刚刚</dd></dl><button class="primary">加入证据库</button><button class="secondary">固定到画布</button></aside></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="approvalDialog"><button class="dialog-close" aria-label="关闭">×</button><small>APPROVAL REQUIRED</small><h2>确认数据切片与计算</h2><div class="approval-grid"><div><span>网络</span><b>访问 NOAA ERDDAP</b></div><div><span>数据</span><b>预计下载 96 MB</b></div><div><span>存储</span><b>project://datasets/sst-jja</b></div><div><span>计算</span><b>2 CPU · 4 GB · 10 min</b></div></div><p>Runner 只获得本次声明的网络域名和项目写入目录。批准不会开放其他宿主文件或凭据。</p><footer><button class="secondary dialog-close">取消</button><button class="primary" id="approve">确认并运行</button></footer></dialog>
+
+  <dialog id="systemDialog"><button class="dialog-close" aria-label="关闭">×</button><small>WINDOWS / WSL2</small><h2>科研运行环境</h2><ul class="health-list"><li><span>Windows Host</span><b>Windows 11 x64</b></li><li><span>WSL2</span><b class="ok">运行正常</b></li><li><span>容器引擎</span><b class="ok">可用</b></li><li><span>活动数据</span><b>WSL ext4 · 184 GB 可用</b></li><li><span>Windows 导入</span><b>一次性复制并校验</b></li></ul><p class="note">高频科研计算不会直接在 C: 或 OneDrive 目录上运行。</p></dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

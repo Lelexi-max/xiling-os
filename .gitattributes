@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.ps1 text eol=lf
+*.bat text eol=lf
+*.cmd text eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.nc binary
+*.grib binary
+*.grib2 binary
+*.zarr/** binary

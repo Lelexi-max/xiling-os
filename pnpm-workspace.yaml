@@ -1,0 +1,19 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+allowBuilds:
+  '@google/genai': false
+  esbuild: true
+  protobufjs: false
+
+catalog:
+  '@earendil-works/pi-coding-agent': 0.84.2
+  '@milkdown/kit': 7.22.1
+  pi-mcp-adapter: 2.27.0
+
+catalogMode: strict
+
+minimumReleaseAge: 2880
+
+onlyBuiltDependencies: []

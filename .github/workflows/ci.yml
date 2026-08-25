@@ -1,0 +1,38 @@
+name: cross-platform
+on:
+  push:
+  pull_request:
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.19.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.19.0, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm --filter @xiling/web build
+      - run: node scripts/platform-smoke.mjs
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/smoke.ps1
+      - if: runner.os == 'Linux'
+        run: pnpm compliance && pnpm sbom
+      - if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with: { name: spdx-sbom, path: build/sbom.spdx.json }
+  runner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with: { context: services/runner, load: true, tags: xiling-runner:gate4 }
+      - run: docker run --rm --network none xiling-runner:gate4 python connector_smoke.py
