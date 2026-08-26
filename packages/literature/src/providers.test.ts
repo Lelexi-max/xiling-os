@@ -13,21 +13,20 @@ describe("literature providers and cache", () => {
     let requested = ""; let key = "";
     const fetchFn: typeof fetch = async (input, init) => {
       requested = String(input); key = new Headers(init?.headers).get("x-api-key") ?? "";
-      return new Response(JSON.stringify({ data: [{ paperId: "s2-1", title: "Marine heatwave", year: 2023, authors: [{ name: "Lin" }], citationCount: 12, references: [{ paperId: "ref-1" }], url: "https://example.test/s2-1", ignoredAbstract: "large payload" }] }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ data: [{ paperId: "s2-1", title: "Marine heatwave", year: 2023, authors: [{ name: "Lin" }], citationCount: 12, references: [{ paperId: "ref-1" }], url: "https://example.test/s2-1", abstract: "Observed upper-ocean warming." }] }), { status: 200, headers: { "content-type": "application/json" } });
     };
     const result = await new SemanticScholarProvider(fetchFn, "fixture-key").search("marine-heatwave", 12);
-    expect(requested).toContain("limit=12"); expect(requested).toContain("fields=title%2Cyear%2Cauthors%2CcitationCount%2Creferences.paperId%2Curl"); expect(requested).toContain("marine+heatwave");
-    expect(key).toBe("fixture-key"); expect(result).toEqual([{ id: "s2-1", title: "Marine heatwave", year: 2023, authors: ["Lin"], citationCount: 12, references: ["ref-1"], source: "semantic-scholar", url: "https://example.test/s2-1" }]);
-    expect(JSON.stringify(result)).not.toContain("large payload");
+    expect(requested).toContain("limit=12"); expect(requested).toContain("fields=title%2Cyear%2Cauthors%2CcitationCount%2Creferences.paperId%2Curl%2Cabstract"); expect(requested).toContain("marine+heatwave");
+    expect(key).toBe("fixture-key"); expect(result).toEqual([{ id: "s2-1", title: "Marine heatwave", year: 2023, authors: ["Lin"], citationCount: 12, references: ["ref-1"], source: "semantic-scholar", url: "https://example.test/s2-1", abstract: "Observed upper-ocean warming." }]);
   });
 
   it("maps OpenAlex works into the same paper contract", async () => {
     let requested = "";
     const fetchFn: typeof fetch = async (input) => {
       requested = String(input);
-      return new Response(JSON.stringify({ results: [{ id: "https://openalex.org/W1", display_name: "Stratification", publication_year: 2022, authorships: [{ author: { display_name: "Chen" } }], cited_by_count: 18, referenced_works: ["https://openalex.org/W2"], doi: "https://doi.org/10.fixture/1" }] }), { status: 200 });
+      return new Response(JSON.stringify({ results: [{ id: "https://openalex.org/W1", display_name: "Stratification", publication_year: 2022, authorships: [{ author: { display_name: "Chen" } }], cited_by_count: 18, referenced_works: ["https://openalex.org/W2"], doi: "https://doi.org/10.fixture/1", abstract_inverted_index: { Ocean: [0], heat: [1] } }] }), { status: 200 });
     };
-    expect(await new OpenAlexProvider(fetchFn).search("stratification", 5)).toEqual([{ id: "W1", title: "Stratification", year: 2022, authors: ["Chen"], citationCount: 18, references: ["W2"], source: "openalex", url: "https://doi.org/10.fixture/1" }]);
+    expect(await new OpenAlexProvider(fetchFn).search("stratification", 5)).toEqual([{ id: "W1", title: "Stratification", year: 2022, authors: ["Chen"], citationCount: 18, references: ["W2"], source: "openalex", url: "https://doi.org/10.fixture/1", abstract: "Ocean heat" }]);
     expect(new URL(requested).searchParams.get("sort")).toBe("relevance_score:desc");
   });
 

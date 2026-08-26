@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/node-sqlite";
 import type { CanvasBranchContext, ChatMessageRecord, ChatSessionSummary, ContextCapsule, EvidenceRecord, Gate4Project, PaperRecord, ProjectItem, ProjectItemKind, ProjectItemStatus, ProjectStatus, ResourceUri, WikiPageDetail, WikiPageRevision, WikiPageSummary, WikiSearchResult } from "@xiling/contracts";
 import { chatMessages, chatSessionContexts, chatSessions, contextCapsules, evidence, projectItems, projects, wikiPages, wikiRevisions } from "./schema.js";
 import { runKnowledgeMigrations } from "./migrations.js";
-import type { KnowledgeStore } from "./ports.js";
+import type { KnowledgeStore, ResearchProjectionOutboxRecord } from "./ports.js";
 
 const DEFAULT_PROJECT_ID = "ocean-heatwave";
 const now = () => new Date().toISOString();
@@ -55,14 +55,26 @@ export class KnowledgeService implements KnowledgeStore {
   createProject(input: { name: string; description: string; researchQuestion: string }): Gate4Project {
     const timestamp = now();
     const value: typeof projects.$inferInsert = { id: randomUUID(), ...input, status: "active", createdAt: timestamp, updatedAt: timestamp };
-    this.db.insert(projects).values(value).run();
-    return projectFromRow(value as typeof projects.$inferSelect);
+    const project = projectFromRow(value as typeof projects.$inferSelect);
+    this.transaction(() => {
+      this.db.insert(projects).values(value).run();
+      this.enqueueProjection(project.id, project.id, "knowledge.project.upserted", project, timestamp);
+    });
+    return project;
   }
 
   updateProject(id: string, patch: Partial<Pick<Gate4Project, "name" | "description" | "researchQuestion" | "status">>): Gate4Project | undefined {
-    this.db.update(projects).set({ ...patch, updatedAt: now() }).where(eq(projects.id, id)).run();
-    const row = this.db.select().from(projects).where(eq(projects.id, id)).get();
-    return row ? projectFromRow(row) : undefined;
+    const timestamp = now();
+    let project: Gate4Project | undefined;
+    this.transaction(() => {
+      const result = this.db.update(projects).set({ ...patch, updatedAt: timestamp }).where(eq(projects.id, id)).run();
+      if (!result.changes) return;
+      const row = this.db.select().from(projects).where(eq(projects.id, id)).get();
+      if (!row) return;
+      project = projectFromRow(row);
+      this.enqueueProjection(id, id, "knowledge.project.upserted", project, timestamp);
+    });
+    return project;
   }
 
   listItems(projectId: string): ProjectItem[] {
@@ -223,7 +235,8 @@ export class KnowledgeService implements KnowledgeStore {
     this.sqlite.exec("BEGIN IMMEDIATE");
     try {
       this.db.insert(wikiPages).values(page).run();
-      this.insertRevision(page.id, 1, input.markdown, input.artifactUris ?? [], timestamp, page.title);
+      const revision = this.insertRevision(page.id, 1, input.markdown, input.artifactUris ?? [], timestamp, page.title);
+      this.enqueueProjection(page.projectId, revision.id, "knowledge.wiki.revision.created", { page, revision }, timestamp);
       this.sqlite.exec("COMMIT");
     } catch (error) { this.sqlite.exec("ROLLBACK"); throw error; }
     return this.getWikiPage(page.id)!;
@@ -249,7 +262,8 @@ export class KnowledgeService implements KnowledgeStore {
     this.sqlite.exec("BEGIN IMMEDIATE");
     try {
       this.db.update(wikiPages).set({ title, updatedAt: timestamp }).where(eq(wikiPages.id, id)).run();
-      this.insertRevision(id, (latest?.version ?? 0) + 1, input.markdown, input.artifactUris ?? [], timestamp, title);
+      const revision = this.insertRevision(id, (latest?.version ?? 0) + 1, input.markdown, input.artifactUris ?? [], timestamp, title);
+      this.enqueueProjection(page.projectId, revision.id, "knowledge.wiki.revision.created", { page: { ...page, title, updatedAt: timestamp }, revision }, timestamp);
       this.sqlite.exec("COMMIT");
     } catch (error) { this.sqlite.exec("ROLLBACK"); throw error; }
     return this.getWikiPage(id);
@@ -267,12 +281,16 @@ export class KnowledgeService implements KnowledgeStore {
     return this.db.update(wikiPages).set({ archived: true, updatedAt: now() }).where(eq(wikiPages.id, id)).run().changes > 0;
   }
 
-  saveEvidence(projectId: string, paper: PaperRecord, note = ""): EvidenceRecord {
+  saveEvidence(projectId: string, paper: PaperRecord, note = "", stance: EvidenceRecord["stance"] = "insufficient", confidence = 0.5): EvidenceRecord {
     const existing = this.db.select().from(evidence).where(and(eq(evidence.projectId, projectId), eq(evidence.paperId, paper.id))).get();
     if (existing) return this.evidenceFromRow(existing);
-    const value: typeof evidence.$inferInsert = { id: randomUUID(), projectId, paperId: paper.id, paperJson: JSON.stringify(paper), note, createdAt: now() };
-    this.db.insert(evidence).values(value).run();
-    return this.evidenceFromRow(value as typeof evidence.$inferSelect);
+    const value: typeof evidence.$inferInsert = { id: randomUUID(), projectId, paperId: paper.id, paperJson: JSON.stringify(paper), note, stance, confidence: Math.max(0, Math.min(confidence, 1)), createdAt: now() };
+    const record = this.evidenceFromRow(value as typeof evidence.$inferSelect);
+    this.transaction(() => {
+      this.db.insert(evidence).values(value).run();
+      this.enqueueProjection(projectId, record.id, "knowledge.evidence.saved", record, record.createdAt);
+    });
+    return record;
   }
 
   listEvidence(projectId = DEFAULT_PROJECT_ID): EvidenceRecord[] {
@@ -280,23 +298,64 @@ export class KnowledgeService implements KnowledgeStore {
   }
 
   private evidenceFromRow(row: typeof evidence.$inferSelect): EvidenceRecord {
-    return { id: row.id, projectId: row.projectId, paper: JSON.parse(row.paperJson) as PaperRecord, note: row.note, createdAt: row.createdAt };
+    return { id: row.id, projectId: row.projectId, paper: JSON.parse(row.paperJson) as PaperRecord, note: row.note, stance: row.stance as EvidenceRecord["stance"], confidence: row.confidence, createdAt: row.createdAt };
   }
 
-  private insertRevision(pageId: string, version: number, markdown: string, artifactUris: ResourceUri[], createdAt: string, title: string): void {
-    this.db.insert(wikiRevisions).values({ id: randomUUID(), pageId, version, markdown, artifactUris: JSON.stringify(artifactUris), createdAt }).run();
+  listProjectionOutbox(limit = 100): ResearchProjectionOutboxRecord[] {
+    const rows = this.sqlite.prepare(`
+      SELECT id, projection_key, project_id, source_id, event_type, payload_json, created_at, applied_at
+      FROM research_projection_outbox WHERE applied_at IS NULL ORDER BY rowid LIMIT ?
+    `).all(Math.max(1, Math.min(limit, 1000))) as Array<{ id: string; projection_key: string; project_id: string; source_id: string; event_type: ResearchProjectionOutboxRecord["eventType"]; payload_json: string; created_at: string; applied_at: string | null }>;
+    return rows.map((row) => ({ id: row.id, projectionKey: row.projection_key, projectId: row.project_id, sourceId: row.source_id, eventType: row.event_type, payload: JSON.parse(row.payload_json) as unknown, createdAt: row.created_at, ...(row.applied_at ? { appliedAt: row.applied_at } : {}) }));
+  }
+
+  markProjectionOutboxApplied(projectionKeys: string[], appliedAt = now()): number {
+    const unique = [...new Set(projectionKeys)];
+    if (!unique.length) return 0;
+    const placeholders = unique.map(() => "?").join(", ");
+    return Number(this.sqlite.prepare(`UPDATE research_projection_outbox SET applied_at = ? WHERE applied_at IS NULL AND projection_key IN (${placeholders})`).run(appliedAt, ...unique).changes);
+  }
+
+  private insertRevision(pageId: string, version: number, markdown: string, artifactUris: ResourceUri[], createdAt: string, title: string): WikiPageRevision {
+    const revision: WikiPageRevision = { id: randomUUID(), pageId, version, markdown, artifactUris, createdAt };
+    this.db.insert(wikiRevisions).values({ ...revision, artifactUris: JSON.stringify(artifactUris) }).run();
     this.sqlite.prepare("INSERT INTO wiki_search(page_id, title, markdown) VALUES (?, ?, ?)").run(pageId, title, markdown);
+    return revision;
+  }
+
+  private enqueueProjection(projectId: string, sourceId: string, eventType: ResearchProjectionOutboxRecord["eventType"], payload: unknown, createdAt: string): void {
+    const id = randomUUID();
+    this.sqlite.prepare(`
+      INSERT INTO research_projection_outbox (id, projection_key, project_id, source_id, event_type, payload_json, created_at, applied_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+    `).run(id, `knowledge:${eventType}:v1:${id}`, projectId, sourceId, eventType, JSON.stringify(payload), createdAt);
+  }
+
+  private transaction<T>(work: () => T): T {
+    this.sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      const result = work();
+      this.sqlite.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.sqlite.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   private seed(): void {
     if (this.db.select().from(projects).get()) return;
     const timestamp = now();
-    this.db.insert(projects).values({ id: DEFAULT_PROJECT_ID, name: "西北太平洋海洋热浪", description: "机制与 Argo 观测验证", researchQuestion: "上层海洋层结是否放大了 2023 年海洋热浪？", status: "active", createdAt: timestamp, updatedAt: timestamp }).run();
+    const project: Gate4Project = { id: DEFAULT_PROJECT_ID, name: "西北太平洋海洋热浪", description: "机制与 Argo 观测验证", researchQuestion: "上层海洋层结是否放大了 2023 年海洋热浪？", status: "active", createdAt: timestamp, updatedAt: timestamp };
+    this.transaction(() => {
+      this.db.insert(projects).values(project).run();
+      this.enqueueProjection(project.id, project.id, "knowledge.project.upserted", project, timestamp);
+    });
     this.createItem(DEFAULT_PROJECT_ID, { kind: "milestone", title: "完成物理海洋科研闭环", notes: "数据切片、容器计算、Reviewer 与复现" });
     const method = this.createWikiPage({ title: "数据与方法", markdown: "# 数据与方法\n\n使用 Argo 温盐剖面验证混合层深度异常。" });
     this.createWikiPage({ title: "研究总览", markdown: `# 研究总览\n\n当前研究连接到 [[${method.slug}]]。` });
   }
 }
 
-export type { AgentKnowledgeReader, ContextCapsuleStore, ConversationStore, EvidenceStore, KnowledgeStore, ProjectItemStore, ProjectStore, WikiStore } from "./ports.js";
+export type { AgentKnowledgeReader, ContextCapsuleStore, ConversationStore, EvidenceStore, KnowledgeStore, ProjectItemStore, ProjectStore, ResearchProjectionOutboxRecord, ResearchProjectionOutboxStore, WikiStore } from "./ports.js";
 export { KNOWLEDGE_SCHEMA_VERSION, runKnowledgeMigrations } from "./migrations.js";

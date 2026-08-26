@@ -11,8 +11,9 @@ Gate 5 已进入执行阶段，当前版本为 `0.1.0-beta.1`。本文件区分�
 - GitHub Actions 覆盖 Ubuntu、Windows hosted runner 与 macOS 的安装、类型检查、测试、Web 构建和平台 smoke。
 - Linux CI 生成 SPDX 2.3 SBOM，并运行许可证与依赖完整性检查。
 - `THIRD_PARTY_NOTICES.md`、开源评估矩阵、ADR、活设计文档和 smoke 矩阵纳入仓库。
-- Gate 4.5 Agent 中枢、Pi 兼容门禁、惰性 Skill/MCP、原生图像输入、项目作用域与迁移备份具有离线回归测试。
-- 本地发布前门禁通过：完整构建、115 项全量测试、smoke、设计文档检查与浏览器验收。
+- Gate 4.5 Agent 中枢、Pi 兼容门禁、惰性 Skill/MCP、原生图像输入、项目作用域、Research Graph 与迁移备份具有离线回归测试。
+- Research Graph RG-5 本地收口完成：三类图隔离、文献阅读标注与结构化证据提升、Scientific Canvas、Wiki 与 Chat 局部科研上下文形成闭环，旧 Canvas 已完全退役。
+- 本地发布前门禁通过：完整构建、127 项全量测试、smoke、设计文档检查、生产 Preview 与 4317/4318 浏览器验收。
 
 ## GitHub 上传后的确认条件
 

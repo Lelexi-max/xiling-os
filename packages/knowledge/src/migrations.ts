@@ -17,6 +17,28 @@ const migrations: Array<{ version: number; sql: string }> = [{
     CREATE INDEX IF NOT EXISTS chat_messages_session_created ON chat_messages(session_id, created_at ASC);
     CREATE VIRTUAL TABLE IF NOT EXISTS wiki_search USING fts5(page_id UNINDEXED, title, markdown, tokenize='unicode61');
   `,
+}, {
+  version: 2,
+  sql: `
+    CREATE TABLE IF NOT EXISTS research_projection_outbox (
+      id TEXT PRIMARY KEY,
+      projection_key TEXT NOT NULL UNIQUE,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      source_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      applied_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS research_projection_outbox_pending
+      ON research_projection_outbox(applied_at, created_at);
+  `,
+}, {
+  version: 3,
+  sql: `
+    ALTER TABLE evidence ADD COLUMN stance TEXT NOT NULL DEFAULT 'insufficient';
+    ALTER TABLE evidence ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5;
+  `,
 }];
 
 export const KNOWLEDGE_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;

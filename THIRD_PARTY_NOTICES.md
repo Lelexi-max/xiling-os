@@ -15,6 +15,7 @@
 | Jupyter Kernel Gateway | Scientific kernel protocol | BSD-3-Clause |
 | RO-Crate / ro-crate-py | Research provenance package | Apache-2.0 |
 | SQLite | Local metadata database | Public Domain |
+| LadybugDB | Embedded Research Graph database | MIT |
 
 ### Gate 2 已固定版本
 
@@ -50,6 +51,12 @@
 |---|---:|---|---|
 | pi-mcp-adapter | 2.27.0 | MIT | 独立 Host 内的单 MCP 代理工具、惰性连接、元数据缓存与审批拦截 |
 | @earendil-works/pi-coding-agent | 0.84.2 | MIT | 仅在隔离 MCP Host 子进程中提供 Extension API；不作为 Web Server 插件宿主 |
+
+### Research Graph RG-0 固定版本
+
+| Package | Version | License | Purpose |
+|---|---:|---|---|
+| @ladybugdb/core | 0.19.1 | MIT | 嵌入式属性图、Cypher、ACID/WAL/Checkpoint；RG-0 通过后作为科研关系事实源 |
 
 ## 计划参考但不复制代码
 

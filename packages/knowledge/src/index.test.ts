@@ -41,6 +41,22 @@ describe("knowledge service smoke", () => {
     service.close();
   });
 
+  it("commits projection outbox records with source mutations and persists acknowledgements", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xiling-knowledge-outbox-"));
+    const path = join(root, "knowledge.sqlite");
+    const first = new KnowledgeService(path);
+    const project = first.createProject({ name: "Outbox 项目", description: "atomic", researchQuestion: "投影是否耐久？" });
+    const projectEvent = first.listProjectionOutbox().find((event) => event.projectId === project.id && event.eventType === "knowledge.project.upserted");
+    expect(projectEvent).toMatchObject({ sourceId: project.id, payload: { name: "Outbox 项目" } });
+    expect(first.markProjectionOutboxApplied([projectEvent!.projectionKey])).toBe(1);
+    expect(first.listProjectionOutbox().some((event) => event.projectionKey === projectEvent!.projectionKey)).toBe(false);
+    first.close();
+
+    const reopened = new KnowledgeService(path);
+    expect(reopened.listProjectionOutbox().some((event) => event.projectionKey === projectEvent!.projectionKey)).toBe(false);
+    reopened.close();
+  });
+
   it("persists project-scoped chat sessions and messages", async () => {
     const root = await mkdtemp(join(tmpdir(), "xiling-chat-history-"));
     const path = join(root, "knowledge.sqlite");

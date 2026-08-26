@@ -2,13 +2,41 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ConnectorWorkflowService, FixtureConnectorAdapter, JsonConnectorJobRepository } from "@xiling/connectors";
+import { ConnectorWorkflowService, FixtureConnectorAdapter, JsonConnectorJobRepository, preflightConnector } from "@xiling/connectors";
 import type { OceanSubsetRequest } from "@xiling/contracts";
-import { FixtureProjectAnalysisRunner, JsonProjectWorkflowRepository, ProjectWorkflowService } from "./project-workflow.js";
+import { FixtureProjectAnalysisRunner, JsonProjectWorkflowRepository, ProjectWorkflowService, SqliteProjectWorkflowRepository } from "./project-workflow.js";
 
 const request: OceanSubsetRequest = { connectorId: "argo-gdac", datasetId: "argo-fixture", variables: ["TEMP", "PSAL", "PRES"], region: { west: 140, east: 150, south: 30, north: 40 }, depth: { min: 0, max: 200 }, time: { start: "2023-01-01", end: "2023-02-01" }, outputFormat: "NetCDF" };
 
 describe("project research workflow", () => {
+  it("persists workflow snapshots and projection outbox records atomically in SQLite", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xiling-workflow-sqlite-"));
+    const path = join(root, "workflows.sqlite");
+    const repository = new SqliteProjectWorkflowRepository(path);
+    const workflow = {
+      id: "workflow-outbox",
+      projectId: "project-outbox",
+      sessionId: "session-outbox",
+      sourceCallId: "call-outbox",
+      requestHash: "hash",
+      request,
+      preflight: preflightConnector(request),
+      status: "draft" as const,
+      createdAt: "2026-08-26T00:00:00.000Z",
+      updatedAt: "2026-08-26T00:00:00.000Z",
+    };
+    await repository.save([workflow]);
+    await expect(repository.load()).resolves.toMatchObject([{ id: workflow.id, status: "draft" }]);
+    const event = repository.listProjectionOutbox()[0]!;
+    expect(event).toMatchObject({ sourceId: workflow.id, workflow: { projectId: workflow.projectId } });
+    expect(repository.markProjectionOutboxApplied([event.projectionKey])).toBe(1);
+    repository.close();
+
+    const reopened = new SqliteProjectWorkflowRepository(path);
+    expect(reopened.listProjectionOutbox()).toHaveLength(0);
+    await expect(reopened.load()).resolves.toHaveLength(1);
+    reopened.close();
+  });
   it("deduplicates a recovered Agent projection and rejects key collisions", async () => {
     const root = await mkdtemp(join(tmpdir(), "xiling-project-workflow-idempotency-"));
     const connector = new FixtureConnectorAdapter(join(root, "connector-artifacts"));

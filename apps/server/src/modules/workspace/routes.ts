@@ -14,10 +14,10 @@ export interface WorkspaceRouteDependencies {
   agentMigrationReady?: Promise<unknown>;
   onChatSessionCreated?(session: { id: string; projectId: string }): AgentSessionRecord;
   onChatSessionArchived?(session: { id: string; projectId: string }): AgentSessionRecord | undefined;
-  validateCanvasContext(projectId: string, context: { activeNodeId: string; quotedNodeIds: string[] }): Promise<unknown>;
+  validateResearchContext(projectId: string, context: { activeNodeId: string; quotedNodeIds: string[] }): Promise<unknown>;
 }
 
-export function registerWorkspaceRoutes(app: FastifyInstance, { knowledge, agentSessions, agentMigrationReady, onChatSessionCreated, onChatSessionArchived, validateCanvasContext }: WorkspaceRouteDependencies): void {
+export function registerWorkspaceRoutes(app: FastifyInstance, { knowledge, agentSessions, agentMigrationReady, onChatSessionCreated, onChatSessionArchived, validateResearchContext }: WorkspaceRouteDependencies): void {
   app.get("/api/gate4/projects", async () => knowledge.listProjects());
   app.post("/api/gate4/projects", async (request, reply) => {
     const parsed = projectCreateSchema.safeParse(request.body);
@@ -108,14 +108,14 @@ export function registerWorkspaceRoutes(app: FastifyInstance, { knowledge, agent
     const params = idParamsSchema.safeParse(request.params);
     if (!params.success) return reply.code(400).send({ error: params.error.issues });
     if (!knowledge.getChatSession(params.data.id)) return reply.code(404).send({ error: "Chat session not found" });
-    return knowledge.getChatSessionContext(params.data.id) ?? reply.code(404).send({ error: "Canvas context not set" });
+    return knowledge.getChatSessionContext(params.data.id) ?? reply.code(404).send({ error: "Research Graph context not set" });
   });
   app.put("/api/gate4/chat-sessions/:id/context", async (request, reply) => {
     const params = idParamsSchema.safeParse(request.params); const body = branchContextSchema.safeParse(request.body);
-    if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid chat canvas context" });
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid Chat Research Graph context" });
     const session = knowledge.getChatSession(params.data.id);
     if (!session) return reply.code(404).send({ error: "Chat session not found" });
-    try { await validateCanvasContext(session.projectId, body.data); return knowledge.setChatSessionContext(params.data.id, { projectId: session.projectId, ...body.data }); }
+    try { await validateResearchContext(session.projectId, body.data); return knowledge.setChatSessionContext(params.data.id, { projectId: session.projectId, ...body.data }); }
     catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) }); }
   });
 

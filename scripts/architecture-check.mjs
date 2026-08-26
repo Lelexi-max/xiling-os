@@ -15,6 +15,7 @@ const allowedInternalDependencies = new Map([
   ["pi-runtime", new Set(["contracts"])],
   ["platform", new Set(["contracts"])],
   ["research", new Set(["contracts"])],
+  ["research-graph", new Set(["contracts"])],
 ]);
 
 function files(directory) {

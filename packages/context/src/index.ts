@@ -5,6 +5,7 @@ import type {
   ContextAssemblyTrace,
   ContextProjection,
   ContextProjectionRequest,
+  ResearchGraphProjection,
   ResourceUri,
 } from "@xiling/contracts";
 import { createHash } from "node:crypto";
@@ -122,6 +123,88 @@ export function projectContext(
   };
 }
 
+/** Build a bounded local scientific context from a cyclic Research Graph. */
+export function projectResearchGraphContext(
+  request: ContextProjectionRequest,
+  graph: ResearchGraphProjection,
+  capsules: Map<string, ContextCapsule>,
+  catalog: CapabilityDescriptor[] = [],
+  options: { maxNeighbourNodes?: number; maxDepth?: number } = {},
+): ContextProjection {
+  const entities = new Map(graph.nodes.map((node) => [node.id, node]));
+  if (!entities.has(request.activeNodeId)) throw new Error(`Unknown Research Graph entity: ${request.activeNodeId}`);
+  const maxNeighbourNodes = Math.max(0, Math.min(16, options.maxNeighbourNodes ?? 8));
+  const maxDepth = Math.max(0, Math.min(3, options.maxDepth ?? 2));
+  const explicitQuoted = [...new Set(request.quotedNodeIds)].filter((id) => id !== request.activeNodeId);
+  for (const id of explicitQuoted) if (!entities.has(id)) throw new Error(`Unknown quoted Research Graph entity: ${id}`);
+
+  const relationPriority = new Map([
+    "BASED_ON", "ASSERTS", "EVALUATES", "USED", "GENERATED", "DERIVED_FROM",
+    "HAS_VERSION", "HAS_REVISION", "HAS_FRAGMENT", "DOCUMENTS", "CITES",
+    "TRANSITIONED_BY", "SUPERSEDES", "CONTAINS", "REFERENCES", "ASSOCIATED_WITH",
+  ].map((kind, index) => [kind, index]));
+  const adjacency = new Map<string, Array<{ id: string; rank: number }>>();
+  for (const relation of graph.relations) {
+    if (!entities.has(relation.sourceId) || !entities.has(relation.targetId)) continue;
+    const rank = relationPriority.get(relation.kind) ?? 999;
+    adjacency.set(relation.sourceId, [...(adjacency.get(relation.sourceId) ?? []), { id: relation.targetId, rank }]);
+    adjacency.set(relation.targetId, [...(adjacency.get(relation.targetId) ?? []), { id: relation.sourceId, rank }]);
+  }
+  for (const neighbours of adjacency.values()) neighbours.sort((left, right) => left.rank - right.rank || left.id.localeCompare(right.id));
+
+  const visited = new Set([request.activeNodeId, ...explicitQuoted]);
+  const neighbourhood: string[] = [];
+  let frontier = [request.activeNodeId];
+  for (let depth = 1; depth <= maxDepth && frontier.length && neighbourhood.length < maxNeighbourNodes; depth += 1) {
+    const next: string[] = [];
+    for (const source of frontier) {
+      for (const neighbour of adjacency.get(source) ?? []) {
+        if (visited.has(neighbour.id)) continue;
+        visited.add(neighbour.id);
+        neighbourhood.push(neighbour.id);
+        next.push(neighbour.id);
+        if (neighbourhood.length >= maxNeighbourNodes) break;
+      }
+      if (neighbourhood.length >= maxNeighbourNodes) break;
+    }
+    frontier = next;
+  }
+
+  // Research Graph relations are not a conversation tree. The legacy field is
+  // reused as an ordered local neighbourhood with the active entity last.
+  const activeBranchNodeIds = [...neighbourhood.reverse(), request.activeNodeId];
+  const quotedNodeIds = explicitQuoted;
+  const selectedIds = [...activeBranchNodeIds, ...quotedNodeIds];
+  const selectedCapsules = selectedIds.map((id) => capsules.get(id)).filter((capsule): capsule is ContextCapsule => capsule !== undefined);
+  const artifactUris = new Set<ResourceUri>();
+  let artifactReferences = 0;
+  for (const id of selectedIds) {
+    const uri = entities.get(id)?.uri;
+    if (typeof uri === "string" && /^(artifact|dataset|project):\/\//.test(uri)) { artifactUris.add(uri as ResourceUri); artifactReferences += 1; }
+  }
+  for (const capsule of selectedCapsules) for (const uri of capsule.artifactUris) { artifactUris.add(uri); artifactReferences += 1; }
+  const activatedCapabilities = request.activatedCapabilityIds
+    ? [...new Set(request.activatedCapabilityIds)]
+    : request.capabilityQuery ? discoverCapabilities(request.capabilityQuery, catalog) : [];
+  const projectionIdentity = { projectId: graph.projectId, view: graph.view, activeBranchNodeIds, quotedNodeIds, capsuleRevisions: selectedCapsules.map((item) => [item.id, item.sourceRevision]), artifactUris: [...artifactUris].sort(), activatedCapabilities };
+  const projectionHash = createHash("sha256").update(JSON.stringify(projectionIdentity)).digest("hex");
+  return {
+    activeBranchNodeIds,
+    quotedNodeIds,
+    capsules: selectedCapsules,
+    artifactUris: [...artifactUris],
+    activatedCapabilities,
+    projectionHash,
+    economy: { uniqueArtifactCount: artifactUris.size, reusedArtifactReferences: Math.max(0, artifactReferences - artifactUris.size), selectedNodeCount: selectedIds.length, capsuleReuseCount: selectedCapsules.length },
+    explanation: [
+      `Research Graph 活动实体 1 个，局部邻域 ${neighbourhood.length} 个`,
+      `显式引用 ${quotedNodeIds.length} 个跨关系实体`,
+      `复用 ${selectedCapsules.length} 个增量胶囊`,
+      `按需激活 ${activatedCapabilities.length} 项能力`,
+    ],
+  };
+}
+
 const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
 const contentHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
@@ -209,13 +292,13 @@ export function assembleContext(input: ContextAssemblyInput): ContextAssemblyRes
     const capsule = capsuleByNode.get(id);
     const node = input.nodes.get(id);
     if (!capsule && !node) continue;
-    lines.push(`[活动分支胶囊 · ${id}] ${node?.title ?? id}：${capsule?.summary ?? node?.body ?? ""}`);
+    lines.push(`[科研邻域胶囊 · ${id}] ${node?.title ?? id}：${capsule?.summary ?? node?.body ?? ""}`);
     capsuleIds.push(id);
   }
   for (const id of [...activeIds.filter((candidate) => exactIds.has(candidate)), ...quoteIds]) {
     const node = input.nodes.get(id);
     if (!node) continue;
-    lines.push(`[${quoteIds.includes(id) ? "显式引用原文" : "近期活动节点原文"} · ${id}] ${node.title}：${normalizeText(node.body)}`);
+    lines.push(`[${quoteIds.includes(id) ? "显式引用原文" : "活动科研实体原文"} · ${id}] ${node.title}：${normalizeText(node.body)}`);
   }
 
   const canvasText = lines.map((line) => `- ${line}`).join("\n");

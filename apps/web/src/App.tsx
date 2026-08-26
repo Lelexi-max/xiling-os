@@ -2,13 +2,13 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "rea
 import { WorkspaceProvider, useWorkspace } from "./workspace/WorkspaceContext.js";
 import { ConversationProvider, useConversations } from "./workspace/ConversationContext.js";
 
-const CanvasView = lazy(async () => ({ default: (await import("./canvas/CanvasView.js")).CanvasView }));
 const ChatView = lazy(async () => ({ default: (await import("./chat/ChatView.js")).ChatView }));
 const ResearchView = lazy(async () => ({ default: (await import("./research/ResearchView.js")).ResearchView }));
 const PaperGraphView = lazy(async () => ({ default: (await import("./papers/PaperGraphView.js")).PaperGraphView }));
 const ProjectView = lazy(async () => ({ default: (await import("./project/ProjectView.js")).ProjectView }));
 const WikiView = lazy(async () => ({ default: (await import("./wiki/WikiView.js")).WikiView }));
 const SettingsView = lazy(async () => ({ default: (await import("./settings/SettingsView.js")).SettingsView }));
+const ScientificCanvasView = lazy(async () => ({ default: (await import("./canvas/ScientificCanvasView.js")).ScientificCanvasView }));
 
 type View = "chat" | "canvas" | "project" | "wiki" | "papers" | "settings";
 
@@ -23,7 +23,7 @@ const labels: Record<View, string> = {
 
 const icons: Record<View, ReactNode> = {
   chat: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h7A2.5 2.5 0 0 1 16 5.5v4a2.5 2.5 0 0 1-2.5 2.5H9l-3.8 3v-3.3A2.5 2.5 0 0 1 4 9.5z" /></>,
-  canvas: <><circle cx="5" cy="5" r="2" /><circle cx="15" cy="5" r="2" /><circle cx="10" cy="15" r="2" /><path d="M6.8 6.1 9 13m4.2-6.9L11 13M7 5h6" /></>,
+  canvas: <><circle cx="5" cy="5" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="10" cy="15" r="2"/><path d="m7 5.2 6 .6M6.2 6.7l2.7 6.5m4.8-5.5-2.6 5.5"/></>,
   project: <><path d="M3 6.5h14v10H3zM3 6.5l3-3h4l2 3" /></>,
   wiki: <><path d="M4 3.5h9a3 3 0 0 1 3 3v10H7a3 3 0 0 1-3-3zM7 6.5h6M7 10h6" /></>,
   papers: <><circle cx="6" cy="6" r="2.5" /><circle cx="14.5" cy="5" r="2.5" /><circle cx="11" cy="14.5" r="2.5" /><path d="m8.4 5.7 3.6-.4M7.2 8.2l2.7 4.1m3.1-5  -1.1 4.8" /></>,
@@ -35,8 +35,8 @@ export function App() {
 }
 
 function WorkspaceApp() {
-  const [view, setView] = useState<View>("canvas");
-  const settingsReturnView = useRef<Exclude<View, "settings">>("canvas");
+  const [view, setView] = useState<View>("chat");
+  const settingsReturnView = useRef<Exclude<View, "settings">>("chat");
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const { projects, activeProject, activeProjectId, setActiveProjectId, refreshProjects, loading, error } = useWorkspace();
@@ -81,7 +81,7 @@ function WorkspaceApp() {
           {view === "settings" ? <div className="settings-top-status"><i />本地设置 · 凭据不会回传</div> : <div className="workspace-actions"><span className="save-state">✓ 已保存</span><button>分享</button><button className="more-button">•••</button></div>}
         </header>
         <Suspense fallback={<div className="view-loading">按需加载当前视图…</div>}>
-          {view === "canvas" ? <CanvasView project={activeProject} onNavigate={setView} /> : view === "chat" ? <ChatView project={activeProject} /> : view === "project" ? <ProjectView ResearchWorkflow={ResearchView} projectId={activeProjectId} projects={projects} onProjectChange={setActiveProjectId} onProjectsChange={refreshProjects} /> : view === "wiki" ? <WikiView projectId={activeProjectId} onNavigate={setView} /> : view === "papers" ? <PaperGraphView projectId={activeProjectId} /> : view === "settings" ? <SettingsView /> : <Placeholder title={labels[view]} />}
+          {view === "chat" ? <ChatView project={activeProject} /> : view === "canvas" ? <ScientificCanvasView projectId={activeProjectId} /> : view === "project" ? <ProjectView ResearchWorkflow={ResearchView} projectId={activeProjectId} projects={projects} onProjectChange={setActiveProjectId} onProjectsChange={refreshProjects} /> : view === "wiki" ? <WikiView projectId={activeProjectId} onNavigate={setView} /> : view === "papers" ? <PaperGraphView projectId={activeProjectId} onNavigate={setView} /> : view === "settings" ? <SettingsView /> : <Placeholder title={labels[view]} />}
         </Suspense>
       </section>
     </main>

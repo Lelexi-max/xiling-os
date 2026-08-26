@@ -31,6 +31,11 @@ const integer = (value: unknown): number => typeof value === "number" && Number.
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" ? value as Record<string, unknown> : {};
 const array = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
 
+function abstractFromInvertedIndex(value: unknown): string {
+  const positions = Object.entries(record(value)).flatMap(([word, indices]) => array(indices).map((index) => [integer(index), word] as const));
+  return positions.sort((left, right) => left[0] - right[0]).map((entry) => entry[1]).join(" ").trim();
+}
+
 export class SemanticScholarProvider implements LiteratureProvider {
   readonly id = "semantic-scholar" as const;
   constructor(private readonly fetchFn: LiteratureFetch = fetch, private readonly apiKey?: string | (() => string | undefined)) {}
@@ -38,7 +43,7 @@ export class SemanticScholarProvider implements LiteratureProvider {
     const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
     url.searchParams.set("query", query.replaceAll("-", " "));
     url.searchParams.set("limit", String(limit));
-    url.searchParams.set("fields", "title,year,authors,citationCount,references.paperId,url");
+    url.searchParams.set("fields", "title,year,authors,citationCount,references.paperId,url,abstract");
     const apiKey = typeof this.apiKey === "function" ? this.apiKey() : this.apiKey;
     const body = record(await jsonRequest(this.fetchFn, this.id, url, apiKey ? { "x-api-key": apiKey } : {}, signal));
     return array(body.data).map((item) => {
@@ -48,7 +53,7 @@ export class SemanticScholarProvider implements LiteratureProvider {
         authors: array(paper.authors).map((author) => text(record(author).name)).filter(Boolean),
         citationCount: integer(paper.citationCount),
         references: array(paper.references).map((reference) => text(record(reference).paperId)).filter(Boolean),
-        source: this.id, ...(text(paper.url) ? { url: text(paper.url) } : {}),
+        source: this.id, ...(text(paper.url) ? { url: text(paper.url) } : {}), ...(text(paper.abstract) ? { abstract: text(paper.abstract) } : {}),
       } satisfies PaperRecord;
     }).filter((paper) => paper.id && paper.title);
   }
@@ -62,17 +67,18 @@ export class OpenAlexProvider implements LiteratureProvider {
   async search(query: string, limit: number, signal?: AbortSignal): Promise<PaperRecord[]> {
     const url = new URL("https://api.openalex.org/works");
     url.searchParams.set("search", query); url.searchParams.set("per_page", String(limit)); url.searchParams.set("sort", "relevance_score:desc");
-    url.searchParams.set("select", "id,display_name,publication_year,authorships,cited_by_count,referenced_works,doi");
+    url.searchParams.set("select", "id,display_name,publication_year,authorships,cited_by_count,referenced_works,doi,abstract_inverted_index");
     const apiKey = typeof this.apiKey === "function" ? this.apiKey() : this.apiKey;
     if (apiKey) url.searchParams.set("api_key", apiKey);
     const body = record(await jsonRequest(this.fetchFn, this.id, url, {}, signal));
     return array(body.results).map((item) => {
       const work = record(item);
+      const abstract = abstractFromInvertedIndex(work.abstract_inverted_index);
       return {
         id: openAlexId(work.id), title: text(work.display_name), year: integer(work.publication_year),
         authors: array(work.authorships).map((authorship) => text(record(record(authorship).author).display_name)).filter(Boolean),
         citationCount: integer(work.cited_by_count), references: array(work.referenced_works).map(openAlexId).filter(Boolean), source: this.id,
-        ...(text(work.doi) ? { url: text(work.doi) } : text(work.id) ? { url: text(work.id) } : {}),
+        ...(text(work.doi) ? { url: text(work.doi) } : text(work.id) ? { url: text(work.id) } : {}), ...(abstract ? { abstract } : {}),
       } satisfies PaperRecord;
     }).filter((paper) => paper.id && paper.title);
   }

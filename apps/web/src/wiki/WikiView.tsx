@@ -4,11 +4,11 @@ import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { history } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
 import type {
-  CanvasGraphDocument,
   EvidenceRecord,
   Gate4Project,
   ProjectItem,
   ProjectResearchWorkflow,
+  ResearchGraphProjection,
   ResourceUri,
   WikiPageDetail,
   WikiPageRevision,
@@ -17,14 +17,14 @@ import type {
 } from "@xiling/contracts";
 import "@milkdown/kit/prose/view/style/prosemirror.css";
 
-type WikiDestination = "canvas" | "project" | "papers";
+type WikiDestination = "project" | "papers";
 type WikiMode = "read" | "edit";
 type Heading = { id: string; label: string; level: number };
 type OverviewData = {
   project: Gate4Project | null;
   items: ProjectItem[];
   evidence: EvidenceRecord[];
-  canvas: CanvasGraphDocument;
+  researchGraph: ResearchGraphProjection;
   workflows: ProjectResearchWorkflow[];
 };
 
@@ -32,7 +32,7 @@ const emptyOverview: OverviewData = {
   project: null,
   items: [],
   evidence: [],
-  canvas: { version: 2, nodes: [], edges: [] },
+  researchGraph: { projectId: "", view: "all", nodes: [], relations: [], generatedAt: "" },
   workflows: [],
 };
 
@@ -70,14 +70,14 @@ export function WikiView({ projectId, onNavigate }: { projectId: string; onNavig
 
   const loadOverview = async () => {
     const encoded = encodeURIComponent(projectId);
-    const [projects, items, evidence, canvas, workflows] = await Promise.all([
+    const [projects, items, evidence, researchGraph, workflows] = await Promise.all([
       jsonRequest<Gate4Project[]>("/api/gate4/projects"),
       jsonRequest<ProjectItem[]>(`/api/gate4/project-items?projectId=${encoded}`),
       jsonRequest<EvidenceRecord[]>(`/api/gate4/evidence?projectId=${encoded}`),
-      jsonRequest<CanvasGraphDocument>(`/api/gate4/canvas/layout?projectId=${encoded}`),
+      jsonRequest<ResearchGraphProjection>(`/api/projects/${encoded}/research-graph?view=all`),
       jsonRequest<ProjectResearchWorkflow[]>(`/api/gate4/research-workflows?projectId=${encoded}`),
     ]);
-    setOverview({ project: projects.find((item) => item.id === projectId) ?? null, items, evidence, canvas, workflows });
+    setOverview({ project: projects.find((item) => item.id === projectId) ?? null, items, evidence, researchGraph, workflows });
   };
 
   const openOverview = () => {
@@ -224,7 +224,7 @@ function ProjectOverview({ data, pages, onOpenPage, onNavigate }: { data: Overvi
   return <article className="wiki-article wiki-overview">
     <header className="wiki-article-head overview-head"><div><span>项目百科　/　总览</span><h1>{data.project?.name ?? "研究项目"}</h1><p>{data.project?.researchQuestion ?? "正在加载项目研究问题…"}</p></div><button className="primary" onClick={() => onNavigate?.("project")}>打开项目管理</button></header>
     <section className="wiki-article-body">
-      <aside className="wiki-infobox project-infobox" aria-label="项目概览信息框"><strong>{data.project?.name ?? "研究项目"}</strong><p>{data.project?.description || "围绕核心问题组织证据、数据、运行与结论。"}</p><dl><div><dt>状态</dt><dd>{projectStatusLabel(data.project?.status)}</dd></div><div><dt>百科条目</dt><dd>{pages.length}</dd></div><div><dt>证据文献</dt><dd>{data.evidence.length}</dd></div><div><dt>画布节点</dt><dd>{data.canvas.nodes.length}</dd></div><div><dt>科研运行</dt><dd>{data.workflows.length}</dd></div><div><dt>已归档产物</dt><dd>{artifactUris.length}</dd></div></dl></aside>
+      <aside className="wiki-infobox project-infobox" aria-label="项目概览信息框"><strong>{data.project?.name ?? "研究项目"}</strong><p>{data.project?.description || "围绕核心问题组织证据、数据、运行与结论。"}</p><dl><div><dt>状态</dt><dd>{projectStatusLabel(data.project?.status)}</dd></div><div><dt>百科条目</dt><dd>{pages.length}</dd></div><div><dt>证据文献</dt><dd>{data.evidence.length}</dd></div><div><dt>科研对象</dt><dd>{data.researchGraph.nodes.length}</dd></div><div><dt>科研运行</dt><dd>{data.workflows.length}</dd></div><div><dt>已归档产物</dt><dd>{artifactUris.length}</dd></div></dl></aside>
       <section id="overview" className="wiki-lead"><p>这是项目的知识入口。它把分散在对话、画布、文献图、科研运行和文件中的结果，组织成可浏览、可追溯、可持续更新的项目百科。</p></section>
       <section id="contents"><div className="wiki-section-title"><div><small>KNOWLEDGE MAP</small><h2>从哪里开始</h2></div><span>{pages.length} 个正式条目</span></div>{pages.length ? <div className="wiki-page-grid">{pages.map((item) => <button key={item.id} onClick={() => void onOpenPage(item.id)}><span>§</span><div><h3>{item.title}</h3><p>版本 {item.revisionCount} · 更新于 {formatDate(item.updatedAt)}</p></div><i>→</i></button>)}</div> : <p className="wiki-empty">尚未创建百科条目。使用左栏的“＋”建立第一个页面。</p>}</section>
       <section id="evidence"><div className="wiki-section-title"><div><small>EVIDENCE</small><h2>证据与文献</h2></div><button onClick={() => onNavigate?.("papers")}>进入文献图 →</button></div>{data.evidence.length ? <div className="wiki-evidence-list">{data.evidence.slice(0, 5).map((record) => <article key={record.id}><span>{record.paper.year}</span><div><h3>{record.paper.title}</h3><p>{record.paper.authors.slice(0, 3).join(" · ")} · {record.paper.citationCount} 次引用</p></div></article>)}</div> : <p className="wiki-empty">保存到证据库的论文会在这里形成可浏览的文献入口。</p>}</section>

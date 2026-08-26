@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FC } from "react";
-import type { AgentInputAttachment, CanvasGraphDocument, ChatMessageRecord, ContextAssemblyTrace, Gate4Project, ModelRuntimeStatus, ProjectItem, ProjectResearchWorkflow, WikiPageDetail } from "@xiling/contracts";
+import type { AgentInputAttachment, ChatMessageRecord, ContextAssemblyTrace, Gate4Project, ModelRuntimeStatus, ProjectItem, ProjectResearchWorkflow, WikiPageDetail } from "@xiling/contracts";
 import { useConversations } from "../workspace/ConversationContext.js";
 import { ResearchWorkflowCard } from "./ResearchWorkflowCard.js";
 import { runResearchTurn } from "../lib/research-session-client.js";
 import { formatAttachmentSize, nativeImageUpload, NATIVE_IMAGE_ACCEPT, readNativeImages, type PendingNativeImage } from "../lib/native-image-input.js";
+import { AgentExecutionGraphView } from "./AgentExecutionGraphView.js";
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
@@ -78,6 +79,9 @@ export function ChatView({ project }: { project: Gate4Project }) {
   const [artifactWidth, setArtifactWidth] = useState(560);
   const [artifactOpen, setArtifactOpen] = useState(true);
   const [artifactExpanded, setArtifactExpanded] = useState(false);
+  const [primaryMode, setPrimaryMode] = useState<"conversation" | "execution">("conversation");
+  const [graphRefreshKey, setGraphRefreshKey] = useState(0);
+  const artifactBeforeGraphRef = useRef(true);
   const workbenchRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let cancelled = false;
@@ -171,6 +175,7 @@ export function ChatView({ project }: { project: Gate4Project }) {
         if (runAbortRef.current === controller) runAbortRef.current = null;
         if (visibleSessionRef.current === session.id) setRunning(false);
         await refreshSessions(session.id);
+        setGraphRefreshKey((value) => value + 1);
         if (visibleSessionRef.current === session.id) {
           try {
             const response = await fetch(`/api/gate4/chat-sessions/${encodeURIComponent(session.id)}/messages`);
@@ -196,7 +201,7 @@ export function ChatView({ project }: { project: Gate4Project }) {
   };
 
   const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant" && message.id !== `welcome-${project.id}` && message.status === "complete" && message.text.trim());
-  const persistResponse = async (target: "task" | "wiki" | "canvas") => {
+  const persistResponse = async (target: "task" | "wiki") => {
     if (!lastAssistant) return;
     setSaveStatus("正在保存…");
     const title = `Agent 研究记录 · ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
@@ -209,17 +214,8 @@ export function ChatView({ project }: { project: Gate4Project }) {
         const response = await fetch("/api/gate4/wiki/pages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, title, markdown: `# ${title}\n\n${lastAssistant.text}` }) });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         await response.json() as WikiPageDetail;
-      } else {
-        const currentResponse = await fetch(`/api/gate4/canvas/layout?projectId=${encodeURIComponent(project.id)}`);
-        const current = currentResponse.ok ? await currentResponse.json() as CanvasGraphDocument : { version: 2 as const, nodes: [], edges: [] };
-        const sourceNodeId = activeSession?.canvasContext?.activeNodeId ?? "decompose";
-        const node = { id: `agent-note-${lastAssistant.sourceEntryId ?? crypto.randomUUID()}`, x: 520, y: 120 + current.nodes.length * 48, data: { eyebrow: "AGENT CHECKPOINT", title, body: lastAssistant.text.slice(0, 1_800), tone: "answer" as const, source: { kind: "chat-message" as const, sessionId: activeSession?.id, sourceEntryId: lastAssistant.sourceEntryId, runId: lastAssistant.runId }, createdAt: new Date().toISOString() } };
-        const edge = { id: `edge-${sourceNodeId}-${node.id}`, source: sourceNodeId, target: node.id, kind: "checkpoint" as const };
-        const response = await fetch("/api/gate4/canvas/layout", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, nodes: [...current.nodes, node], edges: [...current.edges, edge] }) });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        if (activeSession) await fetch(`/api/gate4/chat-sessions/${encodeURIComponent(activeSession.id)}/context`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ activeNodeId: node.id, quotedNodeIds: activeSession.canvasContext?.quotedNodeIds ?? [] }) });
       }
-      setSaveStatus(target === "task" ? "已保存到项目任务" : target === "wiki" ? "已创建 Wiki 页面" : "已固定到科研画布");
+      setSaveStatus(target === "task" ? "已保存到项目任务" : "已创建 Wiki 页面");
     } catch (cause) { setSaveStatus(`保存失败：${cause instanceof Error ? cause.message : String(cause)}`); }
   };
 
@@ -241,29 +237,43 @@ export function ChatView({ project }: { project: Gate4Project }) {
     document.addEventListener("pointerup", stop);
   };
 
+  const switchPrimaryMode = (next: "conversation" | "execution") => {
+    if (next === primaryMode) return;
+    if (next === "execution") {
+      artifactBeforeGraphRef.current = artifactOpen;
+      setArtifactOpen(false);
+      setArtifactExpanded(false);
+    } else if (artifactBeforeGraphRef.current) {
+      setArtifactOpen(true);
+    }
+    setPrimaryMode(next);
+  };
+
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <div className={`chat-workbench ${artifactExpanded ? "artifact-expanded" : ""}`} ref={workbenchRef} style={{ gridTemplateColumns: artifactExpanded || !artifactOpen ? "minmax(0, 1fr)" : `minmax(390px, 1fr) 7px ${artifactWidth}px` }}>
         <ThreadPrimitive.Root className="chat-view">
-          <div className="chat-heading"><div><small>{project.name} · 研究对话</small><h1>{activeSession?.title ?? "新对话"}</h1></div><div className="chat-heading-actions"><div className={`chat-model-state ${modelRuntime?.mode ?? "offline"}`}><i />{modelRuntime?.mode === "live" ? modelRuntime.ready ? `${modelRuntime.selectedModel?.name ?? modelRuntime.modelId}` : "路由待检查" : "离线演示"}</div>{!artifactOpen ? <button onClick={() => setArtifactOpen(true)}>打开产物面板</button> : null}</div></div>
-          <ThreadPrimitive.Viewport className="aui-thread">
-            <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
-            {workflows.length ? <div className="chat-workflows">{workflows.map((workflow) => <ResearchWorkflowCard key={workflow.id} workflow={workflow} onChange={(updated) => setWorkflows((current) => current.map((item) => item.id === updated.id ? updated : item))} />)}</div> : null}
-          </ThreadPrimitive.Viewport>
-          <div className="agent-activity"><span>⌁ {project.name}</span>{activeSession?.canvasContext ? <span title={`活动节点：${activeSession.canvasContext.activeNodeId}`}>分支上下文 · {activeSession.canvasContext.activeNodeId}{activeSession.canvasContext.quotedNodeIds.length ? ` · 引用 ${activeSession.canvasContext.quotedNodeIds.length}` : ""}</span> : <span>项目级上下文</span>}{contextTrace ? <span title={`原文节点：${contextTrace.exactNodeIds.join(", ") || "无"}\nCapsule 节点：${contextTrace.capsuleNodeIds.join(", ") || "无"}\n能力：${contextTrace.activatedCapabilityIds.join(", ") || "无"}\nSkill：${contextTrace.activatedSkillNames.join(", ") || "无"}`}>{contextTrace.exactNodeIds.length} 原文 · {contextTrace.capsuleNodeIds.length} 胶囊 · {contextTrace.activatedSkillNames.length} Skill · {contextTrace.cache === "hit" ? "组装缓存" : "新投影"}</span> : null}<span>{tools.length ? `${tools.filter((item) => item.status === "complete").length}/${tools.length} 个工具完成` : "按需工具未激活"}</span><span>{running ? "Pi 正在执行" : "Pi 已就绪"}</span></div>
-          {contextTrace?.degradations.length ? <div className="chat-context-notice">{contextTrace.degradations.map((item) => <span key={item}>{item}</span>)}</div> : null}
-          {tools.length ? <div className="chat-tool-trace">{tools.map((tool) => <span className={tool.status} key={tool.callId}>{tool.status === "complete" ? "✓" : tool.status === "failed" ? "×" : "↻"} {tool.name}</span>)}</div> : null}
-          {lastAssistant ? <div className="chat-save-actions"><span>确认后沉淀</span><button onClick={() => void persistResponse("task")}>保存为任务</button><button onClick={() => void persistResponse("wiki")}>写入 Wiki</button><button onClick={() => void persistResponse("canvas")}>固定到画布</button>{saveStatus ? <small>{saveStatus}</small> : null}</div> : null}
-          <ComposerPrimitive.Root className="chat-composer">
+          <div className="chat-heading"><div><small>{project.name} · {primaryMode === "conversation" ? "研究对话" : "Agent 可观测性"}</small><h1>{primaryMode === "conversation" ? activeSession?.title ?? "新对话" : "Agent 运行图"}</h1></div><div className="chat-heading-actions"><div className="chat-primary-switch"><button className={primaryMode === "conversation" ? "active" : ""} onClick={() => switchPrimaryMode("conversation")}>对话</button><button className={primaryMode === "execution" ? "active" : ""} onClick={() => switchPrimaryMode("execution")}>运行图</button></div><div className={`chat-model-state ${modelRuntime?.mode ?? "offline"}`}><i />{modelRuntime?.mode === "live" ? modelRuntime.ready ? `${modelRuntime.selectedModel?.name ?? modelRuntime.modelId}` : "路由待检查" : "离线演示"}</div>{!artifactOpen && primaryMode === "conversation" ? <button onClick={() => setArtifactOpen(true)}>打开产物面板</button> : null}</div></div>
+          {primaryMode === "execution" ? <AgentExecutionGraphView projectId={project.id} activeSessionId={activeSessionId} refreshKey={graphRefreshKey} /> : <>
+            <ThreadPrimitive.Viewport className="aui-thread">
+              <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
+              {workflows.length ? <div className="chat-workflows">{workflows.map((workflow) => <ResearchWorkflowCard key={workflow.id} workflow={workflow} onChange={(updated) => setWorkflows((current) => current.map((item) => item.id === updated.id ? updated : item))} />)}</div> : null}
+            </ThreadPrimitive.Viewport>
+            <div className="agent-activity"><span>⌁ {project.name}</span>{activeSession?.canvasContext ? <span title={`活动科研实体：${activeSession.canvasContext.activeNodeId}`}>科研图上下文 · {activeSession.canvasContext.activeNodeId}{activeSession.canvasContext.quotedNodeIds.length ? ` · 显式引用 ${activeSession.canvasContext.quotedNodeIds.length}` : ""}</span> : <span>项目研究问题上下文</span>}{contextTrace ? <span title={`精确实体：${contextTrace.exactNodeIds.join(", ") || "无"}\nCapsule 实体：${contextTrace.capsuleNodeIds.join(", ") || "无"}\n能力：${contextTrace.activatedCapabilityIds.join(", ") || "无"}\nSkill：${contextTrace.activatedSkillNames.join(", ") || "无"}`}>{contextTrace.exactNodeIds.length} 精确实体 · {contextTrace.capsuleNodeIds.length} 胶囊 · {contextTrace.activatedSkillNames.length} Skill · {contextTrace.cache === "hit" ? "组装缓存" : "新投影"}</span> : null}<span>{tools.length ? `${tools.filter((item) => item.status === "complete").length}/${tools.length} 个工具完成` : "按需工具未激活"}</span><span>{running ? "Pi 正在执行" : "Pi 已就绪"}</span></div>
+            {contextTrace?.degradations.length ? <div className="chat-context-notice">{contextTrace.degradations.map((item) => <span key={item}>{item}</span>)}</div> : null}
+            {tools.length ? <div className="chat-tool-trace">{tools.map((tool) => <span className={tool.status} key={tool.callId}>{tool.status === "complete" ? "✓" : tool.status === "failed" ? "×" : "↻"} {tool.name}</span>)}</div> : null}
+            {lastAssistant ? <div className="chat-save-actions"><span>确认后沉淀</span><button onClick={() => void persistResponse("task")}>保存为任务</button><button onClick={() => void persistResponse("wiki")}>写入 Wiki</button>{saveStatus ? <small>{saveStatus}</small> : null}</div> : null}
+            <ComposerPrimitive.Root className="chat-composer">
             {pendingImages.length ? <div className="native-attachment-tray">{pendingImages.map((image) => <div key={image.localId}><img src={image.previewUrl} alt="" /><span><b>{image.name}</b><small>{formatAttachmentSize(image.size)} · 原生图像</small></span><button type="button" aria-label={`移除 ${image.name}`} onClick={() => setPendingImages((current) => current.filter((item) => item.localId !== image.localId))}>×</button></div>)}</div> : null}
             {attachmentError ? <div className="native-attachment-error">{attachmentError}</div> : null}
-            <ComposerPrimitive.Input placeholder="询问数据、文献或当前研究分支…" />
+            <ComposerPrimitive.Input placeholder="询问数据、文献或当前科研图选择…" />
             <input ref={imageInputRef} className="native-file-input" type="file" accept={NATIVE_IMAGE_ACCEPT} multiple onChange={(event) => { void addImages(event.currentTarget.files); event.currentTarget.value = ""; }} />
             <div className="composer-tools"><button type="button" aria-label="添加图像" disabled={!nativeImageEnabled || running} title={attachmentTitle} onClick={() => imageInputRef.current?.click()}>＋</button><span>{nativeImageEnabled ? "原生图像可用" : "仅原生模态"}</span></div>
             <ComposerPrimitive.Send aria-label="发送">↑</ComposerPrimitive.Send>
             <ComposerPrimitive.Cancel aria-label="取消">■</ComposerPrimitive.Cancel>
-          </ComposerPrimitive.Root>
-          <p className="adapter-note">回答可能有误，请核对数据来源与科研结论</p>
+            </ComposerPrimitive.Root>
+            <p className="adapter-note">回答可能有误，请核对数据来源与科研结论</p>
+          </>}
         </ThreadPrimitive.Root>
         {artifactOpen && !artifactExpanded ? <div className="split-resizer" role="separator" aria-label="调整 Artifact 面板宽度" aria-orientation="vertical" onPointerDown={beginResize}><i /></div> : null}
         {artifactOpen ? <aside className="artifact-panel">

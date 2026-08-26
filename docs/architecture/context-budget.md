@@ -1,6 +1,6 @@
 # 上下文经济架构：让系统天然省 Token
 
-> 本文同时区分已实现与目标机制。当前主路径已实现 Canvas 分支投影、node Capsule、按需 Skill/tool、整回合历史选择、增量 Compaction、来源回读和组装缓存；TaskPacket、稳定提供商前缀、分层 Capsule 与每次工具继续回合的重新组装仍是后续能力。
+> 本文同时区分已实现与目标机制。当前主路径已实现用户选择的 Research Graph 实体、确定性的两跳有限邻域、显式引用、node Capsule、按需 Skill/tool、整回合历史选择、增量 Compaction、来源回读和组装缓存；TaskPacket、稳定提供商前缀、分层 Capsule 与每次工具继续回合的重新组装仍是后续能力。Agent Execution Graph 是只读可观测投影，绝不直接进入模型上下文；旧 Canvas 已退出 Context 主路径。
 
 ## 原则
 
@@ -8,26 +8,26 @@
 
 Token 数字只用于可观测性、异常保护和成本预估，不作为正常任务的硬裁剪规则。
 
-## 1. 画布即上下文拓扑
+## 1. 科研图选择即上下文入口
 
-### Follow-up
+### Active entity
 
-用户点击一个输入或回答节点继续追问。系统只读取：
+用户在科研画布显式选择一个科研实体作为 Chat 上下文。普通浏览和单击详情不会悄悄改变 Agent。系统只读取：
 
-1. 该节点所属的祖先分支；
-2. 最近需要逐字保留的节点；
-3. 更早分支对应的增量 Context Capsule；
-4. 分支明确引用的 Artifact、论文证据和数据摘要。
+1. 活动科研实体；
+2. 按关系优先级确定的两跳局部邻域，默认最多 8 个；
+3. 邻域中较早实体的增量 Context Capsule；
+4. 明确引用的 Artifact、论文证据和数据摘要。
 
-画布上的其他分支天然不进入请求。
+Research Graph 可以有环，因此不会按对话祖先递归整图。其他项目、无关子图和 Agent Execution Graph 天然不进入请求。
 
-### Quote
+### Explicit references
 
-用户可选择一个或多个任意节点作为下一轮引用。系统只装载被选节点及其最小自解释依赖，不自动附带各分支的完整历史。需要分支背景时，附加已有 Capsule，而不是重复全部消息。
+用户可选择一个或多个科研实体作为显式引用。系统装载被选实体，不自动附带其完整子图。需要正文时再通过 Source Resolver 或 Artifact reader 读取，而不是重复全部消息。
 
-### Merge
+### Synthesis
 
-跨分支综合会产生新的合成节点，记录引用节点、投影哈希和输出。之后继续该合成分支时，复用该结果，不再次输入所有原始分支。
+跨实体综合将来产生新的 Claim/Artifact proposal，记录引用实体、投影哈希和输出。确认写入 Research Graph 后继续复用该结果，不再次输入所有原始来源。
 
 ## 2. 增量 Context Capsule
 

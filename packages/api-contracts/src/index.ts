@@ -5,6 +5,14 @@ export const projectIdSchema = z.string().min(1).max(120);
 export const sessionIdSchema = z.string().min(1).max(160);
 export const idParamsSchema = z.object({ id: sessionIdSchema });
 export const projectIdQuerySchema = z.object({ projectId: projectIdSchema.default("ocean-heatwave") });
+export const researchGraphProjectParamsSchema = z.object({ projectId: projectIdSchema });
+export const researchGraphProjectionQuerySchema = z.object({ view: z.enum(["all", "literature", "evidence", "provenance", "artifacts"]).default("all") });
+export const scientificCanvasLayoutSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  positions: z.array(z.object({ entityId: z.string().min(1).max(240), x: z.number().finite(), y: z.number().finite() })).max(2_000),
+  viewport: z.object({ x: z.number().finite(), y: z.number().finite(), zoom: z.number().finite().min(0.05).max(8) }).optional(),
+});
+export const researchGraphArtifactParamsSchema = researchGraphProjectParamsSchema.extend({ artifactVersionId: z.string().min(1).max(240) });
 
 export const branchContextSchema = z.object({
   activeNodeId: z.string().min(1).max(120),
@@ -35,29 +43,6 @@ export function toOceanSubsetRequest(value: ConnectorRequest): OceanSubsetReques
 export const connectorJobSchema = z.object({ request: connectorRequestSchema, sourceHash: z.string().regex(/^[a-f0-9]{64}$/) });
 export const projectWorkflowCreateSchema = z.object({ projectId: projectIdSchema, sessionId: sessionIdSchema, sourceCallId: z.string().min(1).max(200), request: connectorRequestSchema });
 
-export const canvasNodeDataSchema = z.object({
-  eyebrow: z.string().min(1).max(80),
-  title: z.string().min(1).max(240),
-  body: z.string().max(2_000),
-  tone: z.enum(["prompt", "answer", "paper", "data", "note"]),
-  source: z.object({
-    kind: z.enum(["project", "chat-message", "paper", "workflow", "note"]),
-    sessionId: sessionIdSchema.optional(),
-    messageId: sessionIdSchema.optional(),
-    sourceEntryId: sessionIdSchema.optional(),
-    runId: sessionIdSchema.optional(),
-    paperId: z.string().min(1).max(240).optional(),
-    workflowId: z.string().min(1).max(200).optional(),
-    sourceCallId: z.string().min(1).max(200).optional(),
-  }).optional(),
-  artifactUris: z.array(z.string().regex(/^(artifact|dataset|project):\/\//).transform((value) => value as ResourceUri)).max(24).optional(),
-  createdAt: z.string().datetime().optional(),
-});
-export const canvasLayoutSchema = z.array(z.object({ id: z.string().min(1).max(120), x: z.number().finite(), y: z.number().finite(), data: canvasNodeDataSchema.optional() })).max(100);
-export const canvasEdgeSchema = z.object({ id: z.string().min(1).max(160), source: z.string().min(1).max(120), target: z.string().min(1).max(120), kind: z.enum(["follow-up", "quote", "produced", "checkpoint"]) });
-export const canvasGraphSchema = z.object({ version: z.literal(2), revision: z.number().int().nonnegative().optional(), nodes: canvasLayoutSchema, edges: z.array(canvasEdgeSchema).max(240) });
-export const canvasLayoutPayloadSchema = z.union([canvasLayoutSchema, z.object({ projectId: projectIdSchema, revision: z.number().int().nonnegative().optional(), nodes: canvasLayoutSchema, edges: z.array(canvasEdgeSchema).max(240).optional() })]);
-
 export const projectCreateSchema = z.object({ name: z.string().min(1).max(160), description: z.string().max(1_000).default(""), researchQuestion: z.string().min(1).max(1_000) });
 export const projectUpdateSchema = projectCreateSchema.partial().extend({ status: z.enum(["active", "paused", "archived"]).optional() });
 export const itemCreateSchema = z.object({ projectId: projectIdSchema, kind: z.enum(["milestone", "task", "experiment"]), title: z.string().min(1).max(240), notes: z.string().max(2_000).default("") });
@@ -71,9 +56,9 @@ export const wikiSearchSchema = z.object({ projectId: projectIdSchema, q: z.stri
 export const wikiRevisionParamsSchema = idParamsSchema.extend({ version: z.coerce.number().int().positive() });
 
 export const paperParamsSchema = z.object({ paperId: z.string().min(1).max(240) });
-export const paperSchema = z.object({ id: z.string().min(1).max(240), title: z.string().min(1).max(1_000), year: z.number().int().min(0).max(3_000), authors: z.array(z.string().min(1).max(240)).max(200), citationCount: z.number().int().min(0), references: z.array(z.string().min(1).max(240)).max(10_000), source: z.enum(["semantic-scholar", "openalex", "fixture"]), url: z.string().url().optional() });
-export const scopedPaperSchema = z.object({ projectId: projectIdSchema, paper: paperSchema });
-export function toPaperRecord(paper: z.infer<typeof paperSchema>): PaperRecord { return { id: paper.id, title: paper.title, year: paper.year, authors: paper.authors, citationCount: paper.citationCount, references: paper.references, source: paper.source, ...(paper.url ? { url: paper.url } : {}) }; }
+export const paperSchema = z.object({ id: z.string().min(1).max(240), title: z.string().min(1).max(1_000), year: z.number().int().min(0).max(3_000), authors: z.array(z.string().min(1).max(240)).max(200), citationCount: z.number().int().min(0), references: z.array(z.string().min(1).max(240)).max(10_000), source: z.enum(["semantic-scholar", "openalex", "fixture"]), url: z.string().url().optional(), abstract: z.string().max(50_000).optional() });
+export const scopedPaperSchema = z.object({ projectId: projectIdSchema, paper: paperSchema, note: z.string().max(20_000).default(""), stance: z.enum(["supports", "refutes", "qualifies", "insufficient"]).default("insufficient"), confidence: z.number().min(0).max(1).default(0.5) });
+export function toPaperRecord(paper: z.infer<typeof paperSchema>): PaperRecord { return { id: paper.id, title: paper.title, year: paper.year, authors: paper.authors, citationCount: paper.citationCount, references: paper.references, source: paper.source, ...(paper.url ? { url: paper.url } : {}), ...(paper.abstract ? { abstract: paper.abstract } : {}) }; }
 export const literatureQuerySchema = z.object({ q: z.string().trim().min(2).max(200), limit: z.coerce.number().int().min(5).max(40).default(20) });
 
 export const credentialIdSchema = z.object({ id: z.enum(["openai", "anthropic", "google", "openrouter", "deepseek", "xai", "mistral", "moonshotai", "zai", "groq", "custom", "semantic-scholar", "openalex", "copernicus-marine", "nasa-earthdata"]) });

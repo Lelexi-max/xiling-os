@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import { Gate3ResearchService, JsonProjectRepository } from "@xiling/research";
 import { KnowledgeService } from "@xiling/knowledge";
 
@@ -33,15 +32,15 @@ async function runAgentTurn(app: TestApp, input: { projectId: string; sessionId:
   expect(started.statusCode).toBe(202);
   const runId = started.json().run.id as string;
   let snapshot = started.json();
-  for (let attempt = 0; attempt < 100 && !["completed", "failed", "cancelled", "suspended"].includes(snapshot.run.status); attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
+  for (let attempt = 0; attempt < 1_000 && !["completed", "failed", "cancelled", "suspended"].includes(snapshot.run.status); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
     snapshot = (await app.inject({ method: "GET", url: `/api/agent-center/runs/${runId}?projectId=${encodeURIComponent(input.projectId)}` })).json();
   }
   return snapshot as { run: { id: string; status: string; error?: string }; events: Array<{ type: string; payload: unknown }>; entries: Array<{ id: string; kind: string; text: string }> };
 }
 
 describe("server vertical slice", () => {
-  it("reports health and projects only explicit canvas context", async () => {
+  it("reports health and projects only explicit Research Graph context", async () => {
     const webRoot = await mkdtemp(join(tmpdir(), "xiling-web-fixture-"));
     await writeFile(join(webRoot, "index.html"), "<!doctype html><title>汐灵 OS</title>");
     const app = createApp({ webRoot });
@@ -55,14 +54,12 @@ describe("server vertical slice", () => {
     const projection = await app.inject({
       method: "POST",
       url: "/api/context/project",
-      payload: { activeNodeId: "dataset", quotedNodeIds: ["literature"], capabilityQuery: "分析 Argo 温度" },
+      payload: { activeNodeId: "research-question:ocean-heatwave", quotedNodeIds: ["ocean-heatwave"], capabilityQuery: "分析 Argo 温度" },
     });
-    expect(projection.statusCode).toBe(200);
-    expect(projection.json()).toMatchObject({
-      activeBranchNodeIds: ["question", "decompose", "dataset"],
-      quotedNodeIds: ["literature"],
-      activatedCapabilities: ["project.read", "ocean.subset.plan"],
-    });
+    expect(projection.statusCode, projection.body).toBe(200);
+    expect(projection.json()).toMatchObject({ quotedNodeIds: ["ocean-heatwave"], activatedCapabilities: ["project.read", "ocean.subset.plan"] });
+    expect(projection.json().activeBranchNodeIds.at(-1)).toBe("research-question:ocean-heatwave");
+    expect(projection.json().activeBranchNodeIds.length).toBeLessThanOrEqual(9);
     await app.close();
   });
 
@@ -78,15 +75,15 @@ describe("server vertical slice", () => {
   it("runs the isolated Gate 4.5-B Agent center with durable snapshots and resumable event replay", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "xiling-agent-center-api-"));
     const app = createApp({ dataRoot });
-    expect((await app.inject({ method: "GET", url: "/api/agent-center/status" })).json()).toMatchObject({ mode: "gate-4.5-d-primary", formalChatMigrated: true, canvasSourceEntries: true, workflowProjection: "durable-server-owned", sessionFormat: 1 });
+    expect((await app.inject({ method: "GET", url: "/api/agent-center/status" })).json()).toMatchObject({ mode: "gate-4.5-d-primary", formalChatMigrated: true, researchGraphContext: true, workflowProjection: "durable-server-owned", sessionFormat: 1 });
     const session = await app.inject({ method: "POST", url: "/api/gate4/chat-sessions", payload: { projectId: "ocean-heatwave", title: "Agent Center 测试" } });
     expect(session.statusCode).toBe(201);
     const started = await app.inject({ method: "POST", url: "/api/agent-center/runs", payload: { sessionId: session.json().id, projectId: "ocean-heatwave", prompt: "离线检查海温数据", clientCommandId: "api-command-1" } });
     expect(started.statusCode).toBe(202);
     const runId = started.json().run.id as string;
     let snapshot = started.json();
-    for (let attempt = 0; attempt < 50 && snapshot.run.status !== "completed"; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 2));
+    for (let attempt = 0; attempt < 1_000 && snapshot.run.status !== "completed"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
       snapshot = (await app.inject({ method: "GET", url: `/api/agent-center/runs/${runId}?projectId=ocean-heatwave` })).json();
     }
     expect(snapshot).toMatchObject({ run: { status: "completed" }, entries: [expect.objectContaining({ kind: "user" }), expect.objectContaining({ kind: "assistant" })], usage: [expect.objectContaining({ providerId: "xiling-offline", modelId: "fixture" })] });
@@ -143,7 +140,7 @@ describe("server vertical slice", () => {
     await app.close();
   });
 
-  it("migrates legacy Chat and Canvas sources, then serves formal turns from the Agent store", async () => {
+  it("migrates legacy Chat, detaches the retired Canvas, then serves formal turns from the Agent store", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "xiling-agent-migration-"));
     const first = createApp({ dataRoot });
     const session = await first.inject({ method: "POST", url: "/api/gate4/chat-sessions", payload: { projectId: "ocean-heatwave", title: "迁移对话" } });
@@ -152,8 +149,6 @@ describe("server vertical slice", () => {
     const legacyUser = legacyKnowledge.appendChatMessage(sessionId, { role: "user", text: "旧海温问题", status: "complete" });
     legacyKnowledge.appendChatMessage(sessionId, { role: "assistant", text: "旧海温答案", status: "complete" });
     legacyKnowledge.close();
-    const graph = (await first.inject({ method: "GET", url: "/api/gate4/canvas/layout?projectId=ocean-heatwave" })).json();
-    await first.inject({ method: "POST", url: "/api/gate4/canvas/layout", payload: { projectId: "ocean-heatwave", nodes: [...graph.nodes, { id: "legacy-chat-node", x: 300, y: 700, data: { eyebrow: "RESEARCH PROMPT", title: "旧问题", body: "旧海温问题", tone: "prompt", source: { kind: "chat-message", sessionId, messageId: legacyUser.id } } }], edges: [...graph.edges, { id: "edge-legacy-chat", source: "decompose", target: "legacy-chat-node", kind: "follow-up" }] } });
     await first.close();
 
     const restored = createApp({ dataRoot });
@@ -161,15 +156,13 @@ describe("server vertical slice", () => {
     expect(migrated).toHaveLength(2);
     expect(migrated[0]).toMatchObject({ role: "user", text: "旧海温问题" });
     expect(migrated[0].id).not.toBe(legacyUser.id);
-    const migratedGraph = (await restored.inject({ method: "GET", url: "/api/gate4/canvas/layout?projectId=ocean-heatwave" })).json();
-    expect(migratedGraph.nodes.find((node: { id: string }) => node.id === "legacy-chat-node").data.source).toMatchObject({ messageId: legacyUser.id, sourceEntryId: migrated[0].id });
     const migrationReport = JSON.parse(await readFile(join(dataRoot, "gate4", "agent-migration-report.json"), "utf8"));
-    expect(migrationReport).toMatchObject({ status: "completed", importedMessages: 2, linkedCanvasNodes: 1, backup: { gate: "4.5-C", method: "sqlite-vacuum-into", databases: [{ integrityCheck: "ok" }, { integrityCheck: "ok" }] } });
+    expect(migrationReport).toMatchObject({ version: 3, status: "completed", importedMessages: 2, retiredCanvasDetached: true, backup: { gate: "4.5-C", method: "sqlite-vacuum-into", databases: [{ integrityCheck: "ok" }, { integrityCheck: "ok" }] } });
     expect(JSON.parse(await readFile(join(migrationReport.backup.directory, "manifest.json"), "utf8"))).toMatchObject({ backupId: migrationReport.backup.backupId });
     expect((await restored.inject({ method: "GET", url: `/api/agent-center/sources/entries/${migrated[0].id}?projectId=ocean-heatwave` })).json()).toMatchObject({ text: "旧海温问题", truncated: false });
     expect((await restored.inject({ method: "GET", url: `/api/agent-center/sources/entries/${migrated[0].id}?projectId=other-project` })).statusCode).toBe(404);
 
-    const started = await restored.inject({ method: "POST", url: "/api/agent-center/runs", payload: { sessionId, projectId: "ocean-heatwave", prompt: "继续分析", clientCommandId: "formal-turn-1", context: { activeNodeId: "legacy-chat-node", quotedNodeIds: [] } } });
+    const started = await restored.inject({ method: "POST", url: "/api/agent-center/runs", payload: { sessionId, projectId: "ocean-heatwave", prompt: "继续分析", clientCommandId: "formal-turn-1", context: { activeNodeId: "research-question:ocean-heatwave", quotedNodeIds: [] } } });
     const runId = started.json().run.id as string;
     for (let attempt = 0; attempt < 50; attempt += 1) {
       const snapshot = (await restored.inject({ method: "GET", url: `/api/agent-center/runs/${runId}?projectId=ocean-heatwave` })).json();
@@ -277,41 +270,7 @@ describe("server vertical slice", () => {
     await app.close();
   });
 
-  it("persists free canvas positions and rejects oversized layouts", async () => {
-    const dataRoot = await mkdtemp(join(tmpdir(), "xiling-layout-"));
-    const first = createApp({ dataRoot });
-    const saved = await first.inject({ method: "POST", url: "/api/gate4/canvas/layout", payload: [{ id: "question", x: 321.5, y: -42 }] });
-    expect(saved.json()).toEqual({ status: "saved", revision: 1, nodes: 1, edges: 3 });
-    await first.close();
-    const restored = createApp({ dataRoot });
-    expect((await restored.inject({ method: "GET", url: "/api/gate4/canvas/layout" })).json()).toMatchObject({ version: 2, nodes: expect.arrayContaining([expect.objectContaining({ id: "question", x: 321.5, y: -42 })]), edges: expect.arrayContaining([expect.objectContaining({ source: "question", target: "decompose", kind: "follow-up" })]) });
-    const oversized = Array.from({ length: 101 }, (_, index) => ({ id: `node-${index}`, x: index, y: index }));
-    expect((await restored.inject({ method: "POST", url: "/api/gate4/canvas/layout", payload: oversized })).statusCode).toBe(400);
-    await restored.close();
-  });
-
-  it("migrates legacy canvas arrays and persists explicit semantic edges", async () => {
-    const dataRoot = await mkdtemp(join(tmpdir(), "xiling-canvas-migration-"));
-    const projectId = "legacy-project";
-    const layoutDir = join(dataRoot, "gate4", "canvas-layout");
-    await mkdir(layoutDir, { recursive: true });
-    const layoutPath = join(layoutDir, `${createHash("sha256").update(projectId).digest("hex")}.json`);
-    await writeFile(layoutPath, JSON.stringify([{ id: "workflow-legacy", x: 10, y: 20, data: { eyebrow: "RESEARCH WORKFLOW", title: "旧闭环", body: "迁移", tone: "data" } }]), "utf8");
-    const app = createApp({ dataRoot });
-    const migrated = (await app.inject({ method: "GET", url: `/api/gate4/canvas/layout?projectId=${projectId}` })).json();
-    expect(migrated).toMatchObject({ version: 2, nodes: [expect.objectContaining({ id: "workflow-legacy" })], edges: expect.arrayContaining([expect.objectContaining({ source: "dataset", target: "workflow-legacy", kind: "produced" })]) });
-    const explicit = [...migrated.edges, { id: "edge-workflow-note", source: "workflow-legacy", target: "note-1", kind: "follow-up" }];
-    const saved = await app.inject({ method: "POST", url: "/api/gate4/canvas/layout", payload: { projectId, nodes: [...migrated.nodes, { id: "note-1", x: 30, y: 40 }], edges: explicit } });
-    expect(saved.json()).toMatchObject({ status: "saved", nodes: 2, edges: explicit.length });
-    const cyclic = await app.inject({ method: "POST", url: "/api/gate4/canvas/layout", payload: { projectId, nodes: [...migrated.nodes, { id: "note-1", x: 30, y: 40 }], edges: [...explicit, { id: "edge-note-workflow", source: "note-1", target: "workflow-legacy", kind: "follow-up" }] } });
-    expect(cyclic.statusCode).toBe(400); expect(cyclic.json().error).toContain("cycle");
-    await app.close();
-    const restored = createApp({ dataRoot });
-    expect((await restored.inject({ method: "GET", url: `/api/gate4/canvas/layout?projectId=${projectId}` })).json()).toMatchObject({ edges: expect.arrayContaining([expect.objectContaining({ id: "edge-workflow-note" })]) });
-    await restored.close();
-  });
-
-  it("isolates Wiki, evidence, canvas and chat context by active project", async () => {
+  it("isolates Wiki, evidence, Research Graph and chat context by active project", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "xiling-project-context-"));
     const app = createApp({ dataRoot });
     const created = await app.inject({ method: "POST", url: "/api/gate4/projects", payload: { name: "第二项目", description: "隔离验收", researchQuestion: "第二项目的问题是什么？" } });
@@ -328,10 +287,9 @@ describe("server vertical slice", () => {
     expect((await app.inject({ method: "GET", url: `/api/gate4/evidence?projectId=${projectId}` })).json()).toHaveLength(1);
     expect((await app.inject({ method: "GET", url: "/api/gate4/evidence?projectId=ocean-heatwave" })).json()).toHaveLength(0);
 
-    const saved = await app.inject({ method: "POST", url: "/api/gate4/canvas/layout", payload: { projectId, nodes: [{ id: "question", x: 12, y: 34 }] } });
-    expect(saved.json()).toEqual({ status: "saved", revision: 1, projectId, nodes: 1, edges: 3 });
-    expect((await app.inject({ method: "GET", url: `/api/gate4/canvas/layout?projectId=${projectId}` })).json()).toMatchObject({ version: 2, nodes: expect.arrayContaining([expect.objectContaining({ id: "question", x: 12, y: 34 })]) });
-    expect((await app.inject({ method: "GET", url: "/api/gate4/canvas/layout?projectId=ocean-heatwave" })).json()).toMatchObject({ version: 2, nodes: expect.arrayContaining([expect.objectContaining({ id: "question", data: expect.objectContaining({ title: "西北太平洋海洋热浪" }) })]) });
+    const scopedGraph = await app.inject({ method: "GET", url: `/api/projects/${projectId}/research-graph?view=evidence` });
+    expect(scopedGraph.json().nodes).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "EvidenceAssertion" })]));
+    expect((await app.inject({ method: "GET", url: "/api/projects/ocean-heatwave/research-graph?view=evidence" })).json().nodes).not.toEqual(expect.arrayContaining([expect.objectContaining({ kind: "EvidenceAssertion" })]));
 
     const session = await app.inject({ method: "POST", url: "/api/gate4/chat-sessions", payload: { projectId, title: "第二项目对话" } });
     expect(session.statusCode).toBe(201);
@@ -346,37 +304,39 @@ describe("server vertical slice", () => {
     await app.close();
   });
 
-  it("uses the persisted canvas DAG as Chat context and restores the branch on the session", async () => {
+  it("keeps Scientific Canvas layout separate while restoring Research Graph Chat context", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "xiling-canvas-chat-context-"));
     const app = createApp({ dataRoot });
     const project = await app.inject({ method: "POST", url: "/api/gate4/projects", payload: { name: "分支上下文项目", description: "context fixture", researchQuestion: "涡旋如何影响混合层？" } });
     const projectId = project.json().id as string;
-    const graph = (await app.inject({ method: "GET", url: `/api/gate4/canvas/layout?projectId=${projectId}` })).json();
-    const promptNode = { id: "prompt-1", x: 400, y: 600, data: { eyebrow: "RESEARCH PROMPT", title: "聚焦暖涡", body: "只分析暖涡分支", tone: "prompt", source: { kind: "chat-message", sessionId: "pending", messageId: "user-1" } } };
-    const answerNode = { id: "response-1", x: 400, y: 825, data: { eyebrow: "PI RESPONSE", title: "暖涡回答", body: "暖涡可能加深冬季混合层", tone: "answer", source: { kind: "chat-message", sessionId: "pending", messageId: "assistant-1" } } };
-    const saved = await app.inject({ method: "POST", url: "/api/gate4/canvas/layout", payload: { projectId, nodes: [...graph.nodes, promptNode, answerNode], edges: [...graph.edges, { id: "e-decompose-prompt", source: "decompose", target: "prompt-1", kind: "follow-up" }, { id: "e-prompt-answer", source: "prompt-1", target: "response-1", kind: "follow-up" }, { id: "e-literature-answer", source: "literature", target: "response-1", kind: "quote" }] } });
-    expect(saved.statusCode).toBe(200);
+    const researchQuestionId = `research-question:${projectId}`;
+    const projectEntityId = projectId;
+    const saved = await app.inject({ method: "PUT", url: `/api/projects/${projectId}/research-graph/layout?view=all`, payload: { revision: 0, positions: [{ entityId: researchQuestionId, x: 400, y: 240 }, { entityId: projectEntityId, x: 400, y: 20 }], viewport: { x: 12, y: 34, zoom: 0.8 } } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json()).toMatchObject({ projectId, view: "all", revision: 1, positions: expect.arrayContaining([expect.objectContaining({ entityId: researchQuestionId, x: 400, y: 240 })]) });
+    expect((await app.inject({ method: "GET", url: `/api/projects/${projectId}/research-graph` })).json().nodes).toHaveLength(2);
 
-    const projection = await app.inject({ method: "POST", url: "/api/context/project", payload: { projectId, activeNodeId: "response-1", quotedNodeIds: ["literature", "literature"], capabilityQuery: "继续分析文献" } });
-    expect(projection.statusCode).toBe(200);
-    expect(projection.json()).toMatchObject({ activeBranchNodeIds: ["question", "decompose", "prompt-1", "response-1"], quotedNodeIds: ["literature"], activatedCapabilities: ["project.read", "literature.search"], economy: { selectedNodeCount: 5 } });
-    expect(projection.json().capsules.map((capsule: { sourceNodeId: string }) => capsule.sourceNodeId)).toEqual(["question", "decompose", "prompt-1", "response-1", "literature"]);
+    const projection = await app.inject({ method: "POST", url: "/api/context/project", payload: { projectId, activeNodeId: researchQuestionId, quotedNodeIds: [projectEntityId, projectEntityId], capabilityQuery: "继续分析文献" } });
+    expect(projection.statusCode, projection.body).toBe(200);
+    expect(projection.json()).toMatchObject({ activeBranchNodeIds: [researchQuestionId], quotedNodeIds: [projectEntityId], activatedCapabilities: ["project.read", "literature.search"], economy: { selectedNodeCount: 2 } });
+    expect(projection.json().capsules.map((capsule: { sourceNodeId: string }) => capsule.sourceNodeId)).toEqual([researchQuestionId, projectEntityId]);
 
     const session = await app.inject({ method: "POST", url: "/api/gate4/chat-sessions", payload: { projectId, title: "暖涡分支" } });
     const sessionId = session.json().id as string;
-    expect((await app.inject({ method: "PUT", url: `/api/gate4/chat-sessions/${sessionId}/context`, payload: { activeNodeId: "response-1", quotedNodeIds: ["literature", "literature"] } })).json()).toMatchObject({ projectId, activeNodeId: "response-1", quotedNodeIds: ["literature"] });
+    expect((await app.inject({ method: "PUT", url: `/api/gate4/chat-sessions/${sessionId}/context`, payload: { activeNodeId: researchQuestionId, quotedNodeIds: [projectEntityId, projectEntityId] } })).json()).toMatchObject({ projectId, activeNodeId: researchQuestionId, quotedNodeIds: [projectEntityId] });
     expect((await app.inject({ method: "POST", url: `/api/gate4/chat-sessions/${sessionId}/messages`, payload: { role: "user", text: "沿这个分支继续", status: "complete" } })).statusCode).toBe(404);
-    const snapshot = await runAgentTurn(app, { projectId, sessionId, prompt: "沿这个分支继续", clientCommandId: "canvas-context", context: { activeNodeId: "response-1", quotedNodeIds: ["literature"] } });
+    const snapshot = await runAgentTurn(app, { projectId, sessionId, prompt: "沿这个科研实体继续", clientCommandId: "research-context", context: { activeNodeId: researchQuestionId, quotedNodeIds: [projectEntityId] } });
     const trace = (snapshot.events.find((event) => event.type === "context.ready")?.payload as { trace: { projectionHash: string; includedNodeIds: string[] } }).trace;
     expect(trace.projectionHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(trace.includedNodeIds).toHaveLength(5);
+    expect(trace.includedNodeIds).toHaveLength(2);
     expect(snapshot.run.status).toBe("completed");
-    expect((await app.inject({ method: "GET", url: `/api/gate4/chat-sessions?projectId=${projectId}` })).json()).toMatchObject([{ id: sessionId, canvasContext: { activeNodeId: "response-1", quotedNodeIds: ["literature"] } }]);
+    expect((await app.inject({ method: "GET", url: `/api/gate4/chat-sessions?projectId=${projectId}` })).json()).toMatchObject([{ id: sessionId, canvasContext: { activeNodeId: researchQuestionId, quotedNodeIds: [projectEntityId] } }]);
     expect((await app.inject({ method: "PUT", url: `/api/gate4/chat-sessions/${sessionId}/context`, payload: { activeNodeId: "missing", quotedNodeIds: [] } })).statusCode).toBe(400);
     await app.close();
 
     const restored = createApp({ dataRoot });
-    expect((await restored.inject({ method: "GET", url: `/api/gate4/chat-sessions/${sessionId}/context` })).json()).toMatchObject({ projectId, activeNodeId: "response-1", quotedNodeIds: ["literature"] });
+    expect((await restored.inject({ method: "GET", url: `/api/gate4/chat-sessions/${sessionId}/context` })).json()).toMatchObject({ projectId, activeNodeId: researchQuestionId, quotedNodeIds: [projectEntityId] });
+    expect((await restored.inject({ method: "GET", url: `/api/projects/${projectId}/research-graph/layout?view=all` })).json()).toMatchObject({ revision: 1, viewport: { x: 12, y: 34, zoom: 0.8 } });
     await restored.close();
   });
 
@@ -399,16 +359,20 @@ describe("server vertical slice", () => {
     const artifactPath = `/api/gate4/workflow-artifacts/${created.json().id}/reviewer-report.json`;
     expect((await app.inject({ method: "GET", url: `${artifactPath}?projectId=ocean-heatwave` })).statusCode).toBe(404);
     expect((await app.inject({ method: "GET", url: `${artifactPath}?projectId=${projectId}` })).statusCode).toBe(200);
-    expect((await app.inject({ method: "GET", url: `/api/gate4/project-items?projectId=${projectId}` })).json()).toMatchObject([{ kind: "experiment", title: expect.stringContaining("科研闭环") }]);
-    expect((await app.inject({ method: "GET", url: `/api/gate4/wiki/pages?projectId=${projectId}` })).json()).toMatchObject([{ title: expect.stringContaining("科研闭环") }]);
-    expect((await app.inject({ method: "GET", url: `/api/gate4/canvas/layout?projectId=${projectId}` })).json()).toMatchObject({
-      nodes: expect.arrayContaining([expect.objectContaining({ data: expect.objectContaining({ eyebrow: "RESEARCH WORKFLOW" }) })]),
-      edges: expect.arrayContaining([expect.objectContaining({ source: "dataset", target: expect.stringMatching(/^workflow-/), kind: "produced" })]),
-    });
+    const researchGraph = await app.inject({ method: "GET", url: `/api/projects/${projectId}/research-graph` });
+    expect(researchGraph.statusCode, researchGraph.body).toBe(200);
+    expect(researchGraph.json().nodes.map((node: { kind: string }) => node.kind)).toEqual(expect.arrayContaining(["Project", "ResearchQuestion", "ResearchPlan", "Dataset", "DatasetSnapshot", "Approval", "ResearchRun", "Artifact", "ArtifactVersion", "ReviewReport", "LifecycleEvent"]));
+    expect(researchGraph.json().relations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "USED", sourceId: completed.json().run.id }),
+      expect.objectContaining({ kind: "GENERATED", sourceId: completed.json().run.id }),
+      expect.objectContaining({ kind: "EVALUATES", sourceId: completed.json().review.id, targetId: completed.json().run.id }),
+    ]));
+    expect((await app.inject({ method: "GET", url: `/api/gate4/project-items?projectId=${projectId}` })).json()).toHaveLength(0);
+    expect((await app.inject({ method: "GET", url: `/api/gate4/wiki/pages?projectId=${projectId}` })).json()).toHaveLength(0);
     await app.close();
   });
 
-  it("persists Gate 4 projects, wiki revisions, evidence and pinned papers", async () => {
+  it("persists Gate 4 projects, wiki revisions and projected literature evidence", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "xiling-gate4-knowledge-"));
     const first = createApp({ dataRoot });
     const projects = await first.inject({ method: "GET", url: "/api/gate4/projects" });
@@ -429,18 +393,16 @@ describe("server vertical slice", () => {
     const graph = await first.inject({ method: "GET", url: "/api/gate4/literature/demo" });
     const paperId = graph.json().nodes[0].id as string;
     expect((await first.inject({ method: "POST", url: `/api/gate4/evidence/${paperId}` })).statusCode).toBe(201);
-    expect((await first.inject({ method: "POST", url: `/api/gate4/evidence/${paperId}` })).json()).toMatchObject({ paper: { id: paperId } });
-    expect((await first.inject({ method: "POST", url: `/api/gate4/canvas/papers/${paperId}` })).json()).toMatchObject({ status: "pinned" });
-    expect((await first.inject({ method: "POST", url: `/api/gate4/canvas/papers/${paperId}` })).json()).toMatchObject({ status: "already-pinned" });
+    expect((await first.inject({ method: "POST", url: `/api/gate4/evidence/${paperId}` })).json()).toMatchObject({ paper: { id: paperId }, stance: "insufficient", confidence: 0.5 });
+    expect((await first.inject({ method: "POST", url: `/api/gate4/canvas/papers/${paperId}` })).statusCode).toBe(404);
     await first.close();
 
     const restored = createApp({ dataRoot });
     expect((await restored.inject({ method: "GET", url: "/api/gate4/evidence" })).json()).toHaveLength(1);
     expect((await restored.inject({ method: "GET", url: `/api/gate4/wiki/pages/${page.json().id}` })).json()).toMatchObject({ revisionCount: 3 });
-    expect((await restored.inject({ method: "GET", url: "/api/gate4/canvas/layout" })).json()).toMatchObject({
-      nodes: expect.arrayContaining([expect.objectContaining({ id: `paper-${paperId}` })]),
-      edges: expect.arrayContaining([expect.objectContaining({ source: "literature", target: `paper-${paperId}`, kind: "quote" })]),
-    });
+    const projected = await restored.inject({ method: "GET", url: "/api/projects/ocean-heatwave/research-graph?view=evidence" });
+    expect(projected.json().nodes).toEqual(expect.arrayContaining([expect.objectContaining({ id: expect.stringContaining("evidence-assertion:"), kind: "EvidenceAssertion", stance: "insufficient", confidence: 0.5 })]));
+    expect(projected.json().relations).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "BASED_ON" }), expect.objectContaining({ kind: "EVALUATES", targetId: "research-question:ocean-heatwave" })]));
     await restored.close();
   });
 

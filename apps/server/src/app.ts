@@ -6,24 +6,24 @@ import { fileURLToPath } from "node:url";
 import { open } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { z } from "zod";
 import { ResearchAgentHarness, SqliteAgentSessionStore, type RuntimeUsageInput } from "@xiling/agent-harness";
 import { projectionSchema } from "@xiling/api-contracts";
-import { ContextAssemblyCache, assembleContext, createNodeContextCapsule, estimateContextTokens, projectContext } from "@xiling/context";
-import type { AgentStreamEvent, CanvasGraphDocument, CanvasNode, ConnectorMetadataSummary, ContextCapsule, ModelProviderId, OceanSubsetRequest, ResourceUri } from "@xiling/contracts";
+import { ContextAssemblyCache, assembleContext, createNodeContextCapsule, estimateContextTokens, projectResearchGraphContext } from "@xiling/context";
+import type { AgentStreamEvent, ConnectorMetadataSummary, ContextCapsule, ModelProviderId, OceanSubsetRequest, ResourceUri } from "@xiling/contracts";
 import { LazySkillCatalog, PiMcpGatewayManager, PiRuntimeAdapter, ModelRuntimeStore, TokenLedger, createLiveRoute } from "@xiling/pi-runtime";
 import { Gate3ResearchService, JsonProjectRepository } from "@xiling/research";
 import { DockerArgoResearchRunner, DockerProjectAnalysisRunner } from "./research-runner.js";
 import { ConnectorWorkflowService, FixtureConnectorAdapter, JsonConnectorJobRepository, type ConnectorDownloader, type ConnectorMetadataProbe } from "@xiling/connectors";
 import { FileLiteratureCache, LiteratureSearchService, OpenAlexProvider, SemanticScholarProvider } from "@xiling/literature";
 import { KnowledgeService } from "@xiling/knowledge";
+import { LadybugResearchGraphStore } from "@xiling/research-graph";
 import { CredentialStore } from "@xiling/credentials";
 import { DockerConnectorProbe, DockerConnectorRunner } from "./connector-runner.js";
 import { agentEntryReaderTool, agentHistorySearchTool, researchCapabilityCatalog, selectResearchCapabilities, selectResearchTools } from "./agent-tools.js";
-import { reconcileCanvasSourceCoverage } from "./context-source-coverage.js";
-import { FixtureProjectAnalysisRunner, JsonProjectWorkflowRepository, ProjectWorkflowService, type ProjectAnalysisRunner } from "./project-workflow.js";
-import { FileCanvasRepository } from "./modules/canvas/canvas-repository.js";
-import { registerCanvasRoutes } from "./modules/canvas/routes.js";
+import { FixtureProjectAnalysisRunner, ProjectWorkflowService, SqliteProjectWorkflowRepository, type ProjectAnalysisRunner } from "./project-workflow.js";
 import { registerLiteratureRoutes } from "./modules/literature/routes.js";
 import { registerWorkspaceRoutes } from "./modules/workspace/routes.js";
 import { registerLegacyGate3Routes } from "./modules/legacy-gate3/routes.js";
@@ -35,13 +35,19 @@ import { createGate45CMigrationBackup, type Gate45CMigrationBackupManifest } fro
 import { projectAgentWorkflowDraft, reconcileAgentWorkflowDrafts } from "./agent-workflow-projector.js";
 import { McpSettingsService } from "./modules/mcp/mcp-service.js";
 import { registerMcpSettingsRoutes } from "./modules/mcp/routes.js";
+import { ResearchGraphReconciler } from "./research-graph-projector.js";
+import { registerResearchGraphRoutes } from "./modules/research-graph/routes.js";
+import { ScientificCanvasLayoutStore } from "./modules/research-graph/layout-store.js";
 
 export function createApp(options: { research?: Gate3ResearchService; dataRoot?: string; webRoot?: string; literatureFetch?: typeof fetch; literatureSleep?: (ms: number, signal?: AbortSignal) => Promise<void>; connectorProbe?: ConnectorMetadataProbe; connectorDownloader?: ConnectorDownloader; connectorMode?: "fixture" | "live"; projectAnalysisRunner?: ProjectAnalysisRunner } = {}) {
   const app = Fastify({ logger: false });
   void app.register(cors, { origin: /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/ });
   const webRoot = options.webRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
   void app.register(fastifyStatic, { root: webRoot, wildcard: false });
-  const dataRoot = options.dataRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../../data");
+  const defaultDataRoot = process.env.VITEST || process.env.NODE_ENV === "test"
+    ? resolve(tmpdir(), `xiling-app-test-${randomUUID()}`)
+    : resolve(dirname(fileURLToPath(import.meta.url)), "../../../data");
+  const dataRoot = options.dataRoot ?? defaultDataRoot;
   const gate3Root = resolve(dataRoot, "gate3");
   const gate4Root = resolve(dataRoot, "gate4");
   const readManagedArtifact = async (uri: string, offsetBytes: number, maxBytes: number) => {
@@ -74,6 +80,8 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
   const migrationBackup = priorMigrationBackup ?? ((existsSync(knowledgePath) || existsSync(agentCenterPath)) ? createGate45CMigrationBackup({ gate4Root }) : undefined);
   const knowledge = new KnowledgeService(knowledgePath);
   const agentSessionStore = new SqliteAgentSessionStore(agentCenterPath);
+  const researchGraph = new LadybugResearchGraphStore(resolve(gate4Root, "research-graph.lbdb"));
+  const scientificCanvasLayout = new ScientificCanvasLayoutStore(resolve(gate4Root, "scientific-canvas-layout.sqlite"));
   const credentials = new CredentialStore(resolve(dataRoot, "credentials"));
   const credentialsReady = credentials.initialize();
   const modelRuntime = new ModelRuntimeStore(resolve(gate4Root, "model-runtime.json"));
@@ -121,8 +129,9 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
     const credentialId = request.connectorId === "copernicus-marine" ? "copernicus-marine" : request.connectorId === "nasa-harmony" ? "nasa-earthdata" : undefined;
     return !credentialId || credentials.status(credentialId).configured;
   };
+  const projectWorkflowRepository = new SqliteProjectWorkflowRepository(resolve(gate4Root, "project-workflows.sqlite"));
   const projectWorkflow = new ProjectWorkflowService(
-    new JsonProjectWorkflowRepository(resolve(gate4Root, "project-workflows.json")),
+    projectWorkflowRepository,
     connectorWorkflow,
     connectorProbe,
     options.projectAnalysisRunner ?? (connectorMode === "live" ? new DockerProjectAnalysisRunner(gate4Root) : new FixtureProjectAnalysisRunner(resolve(gate4Root, "project-runs"))),
@@ -139,50 +148,24 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
   );
   const researchReady = research.initialize();
   registerLegacyGate3Routes(app, { research, ready: researchReady, runsRoot: resolve(gate3Root, "runs") });
-  const baseCanvasNodes = (projectId: string): CanvasGraphDocument["nodes"] => {
-    const project = knowledge.getProject(projectId);
-    if (!project) return [];
-    const createdAt = project.createdAt;
-    return [
-      { id: "question", x: 400, y: 90, data: { eyebrow: "RESEARCH QUESTION", title: project.name, body: project.researchQuestion, tone: "prompt", source: { kind: "project" }, createdAt } },
-      { id: "decompose", x: 400, y: 315, data: { eyebrow: "PI RESPONSE", title: "等待研究拆解", body: "从 Chat 或画布提交任务后，Pi 会在当前项目中建立证据与数据分支。", tone: "answer", source: { kind: "project" }, createdAt } },
-      { id: "literature", x: 160, y: 540, data: { eyebrow: "PAPER BRANCH", title: "文献证据", body: "当前项目尚未固定论文。", tone: "paper", source: { kind: "project" }, createdAt } },
-      { id: "dataset", x: 640, y: 540, data: { eyebrow: "DATA BRANCH", title: "数据计划", body: "当前项目尚未确认数据范围。", tone: "data", source: { kind: "project" }, createdAt } },
-    ];
-  };
-  const canvasRepository = new FileCanvasRepository({ root: resolve(gate4Root, "canvas-layout"), legacyPath: resolve(gate4Root, "canvas-layout.json"), defaultProjectId: "ocean-heatwave", baseNodes: baseCanvasNodes });
-  const readCanvasGraph = (projectId: string) => canvasRepository.read(projectId);
-  registerCanvasRoutes(app, canvasRepository);
-  registerLiteratureRoutes(app, { literature, credentialsReady, evidence: knowledge, canvas: canvasRepository });
-  const contextNodeKind = (node: CanvasGraphDocument["nodes"][number]): CanvasNode["kind"] => {
-    const sourceKind = node.data?.source?.kind;
-    if (sourceKind === "paper") return "paper";
-    if (sourceKind === "workflow") return "tool-result";
-    if (node.data?.tone === "prompt") return "prompt";
-    if (node.data?.tone === "paper") return "paper";
-    if (node.data?.tone === "data") return "dataset";
-    if (node.data?.tone === "note") return "note";
-    return node.data?.eyebrow === "AGENT CHECKPOINT" ? "checkpoint" : "response";
-  };
-  const projectCanvasContext = async (projectId: string, request: { activeNodeId: string; quotedNodeIds: string[]; capabilityQuery?: string; activatedCapabilityIds?: string[] }) => {
-    const graph = await readCanvasGraph(projectId);
+  registerLiteratureRoutes(app, { literature, credentialsReady, evidence: knowledge });
+  const projectResearchContext = async (projectId: string, request: { activeNodeId: string; quotedNodeIds: string[]; capabilityQuery?: string; activatedCapabilityIds?: string[] }) => {
+    await researchGraphReady;
+    await researchGraphReconciler.reconcile();
+    const graph = await researchGraph.getProjection(projectId, "all");
     knowledge.pruneContextCapsules(projectId, graph.nodes.map((node) => node.id));
     const persisted = new Map(knowledge.listContextCapsules(projectId).map((capsule) => [capsule.id, capsule]));
-    const nodeMap = new Map<string, CanvasNode>();
     const capsuleMap = new Map<string, ContextCapsule>();
     for (const node of graph.nodes) {
-      if (!node.data) continue;
-      const artifactUris = (node.data.artifactUris ?? []) as ContextCapsule["artifactUris"];
-      const createdAt = node.data.createdAt ?? knowledge.getProject(projectId)?.createdAt ?? new Date(0).toISOString();
-      const candidate = createNodeContextCapsule({ projectId, nodeId: node.id, title: node.data.title, body: node.data.body, artifactUris });
+      const artifactUris = (node.uri && /^(artifact|dataset|project):\/\//.test(node.uri) ? [node.uri as ResourceUri] : []) as ContextCapsule["artifactUris"];
+      const candidate = createNodeContextCapsule({ projectId, nodeId: node.id, title: node.title, body: node.summary, artifactUris, updatedAt: node.updatedAt });
       const existing = persisted.get(candidate.id);
       const capsule = existing?.sourceRevision === candidate.sourceRevision ? existing : knowledge.upsertContextCapsule(projectId, candidate);
-      nodeMap.set(node.id, { id: node.id, projectId, kind: contextNodeKind(node), title: node.data.title, summary: capsule.summary, ...(artifactUris[0] ? { artifactUri: artifactUris[0] } : {}), createdAt });
       capsuleMap.set(node.id, capsule);
     }
     const resolvedCapabilities = request.activatedCapabilityIds ?? (request.capabilityQuery ? selectResearchCapabilities(request.capabilityQuery).map((capability) => capability.id) : []);
     const projectionRequest = { activeNodeId: request.activeNodeId, quotedNodeIds: request.quotedNodeIds, activatedCapabilityIds: resolvedCapabilities };
-    const projection = projectContext(projectionRequest, { nodes: nodeMap, capsules: capsuleMap, edges: graph.edges }, researchCapabilityCatalog);
+    const projection = projectResearchGraphContext(projectionRequest, graph, capsuleMap, researchCapabilityCatalog);
     return { graph, projection };
   };
   const agentHarness = new ResearchAgentHarness(agentSessionStore, {
@@ -199,13 +182,14 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
       await mcpReady;
       if (mcpGateway.matches(prompt)) activeTools = [...activeTools, mcpGateway.tool()];
       const persistedContext = knowledge.getChatSessionContext(sessionId);
-      const requestedContext = command.context ?? (persistedContext ? { activeNodeId: persistedContext.activeNodeId, quotedNodeIds: persistedContext.quotedNodeIds } : { activeNodeId: "decompose", quotedNodeIds: [] });
+      const defaultContext = { activeNodeId: `research-question:${activeProject.id}`, quotedNodeIds: [] };
+      const requestedContext = command.context ?? (persistedContext ? { activeNodeId: persistedContext.activeNodeId, quotedNodeIds: persistedContext.quotedNodeIds } : defaultContext);
       let resolvedContext = requestedContext;
-      let canvasProjection: Awaited<ReturnType<typeof projectCanvasContext>>;
-      try { canvasProjection = await projectCanvasContext(activeProject.id, { ...requestedContext, activatedCapabilityIds: activeCapabilities.map((capability) => capability.id) }); }
+      let researchProjection: Awaited<ReturnType<typeof projectResearchContext>>;
+      try { researchProjection = await projectResearchContext(activeProject.id, { ...requestedContext, activatedCapabilityIds: activeCapabilities.map((capability) => capability.id) }); }
       catch {
-        resolvedContext = { activeNodeId: "decompose", quotedNodeIds: [] };
-        canvasProjection = await projectCanvasContext(activeProject.id, { ...resolvedContext, activatedCapabilityIds: activeCapabilities.map((capability) => capability.id) });
+        resolvedContext = defaultContext;
+        researchProjection = await projectResearchContext(activeProject.id, { ...resolvedContext, activatedCapabilityIds: activeCapabilities.map((capability) => capability.id) });
       }
       if (knowledge.getChatSession(sessionId)) knowledge.setChatSessionContext(sessionId, { projectId: activeProject.id, ...resolvedContext });
       const routeStatus = await modelStatus();
@@ -231,25 +215,15 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
         "任何下载、计算、外部写入或结论沉淀都必须停在计划/建议阶段，等待用户确认。",
         "引用工具结果时说明数据源；缺少证据时明确说明。",
       ].join("\n");
-      const projectPrompt = `当前项目：${activeProject.name}\n研究问题：${activeProject.researchQuestion}\n当前画布活动节点：${resolvedContext.activeNodeId}\n当前画布显式引用：${resolvedContext.quotedNodeIds.join(", ") || "无"}`;
-      const projectedNodeIds = new Set([...canvasProjection.projection.activeBranchNodeIds, ...canvasProjection.projection.quotedNodeIds]);
-      const sourceCoverage = reconcileCanvasSourceCoverage({
-        history,
-        nodes: canvasProjection.graph.nodes.flatMap((node) => projectedNodeIds.has(node.id) && node.data
-          ? [{ id: node.id, body: node.data.body, ...(node.data.source?.sourceEntryId ? { sourceEntryId: node.data.source.sourceEntryId } : {}) }]
-          : []),
-        getDurableEntry: (entryId) => agentSessionStore.getEntry(entryId),
-      });
-      const historyRecords = sourceCoverage.history;
-      const allowedSourceEntries = new Set(sourceCoverage.incompleteSources.map(({ sourceEntryId }) => sourceEntryId));
+      const projectPrompt = `当前项目：${activeProject.name}\n研究问题：${activeProject.researchQuestion}\n当前科研图活动实体：${resolvedContext.activeNodeId}\n当前科研图显式引用：${resolvedContext.quotedNodeIds.join(", ") || "无"}`;
+      const historyRecords = history;
+      const allowedSourceEntries = new Set<string>();
       const latestCompaction = agentSessionStore.latestCompaction(sessionId);
       const compactedEntries = latestCompaction
         ? agentSessionStore.listSessionEntries(sessionId).filter((entry) => entry.sequence <= latestCompaction.coveredThroughSequence && entry.kind !== "compaction")
         : [];
       for (const entry of compactedEntries) allowedSourceEntries.add(entry.id);
-      const sourceLookupPrompt = sourceCoverage.incompleteSources.length
-        ? `以下画布节点只是截断预览；需要全文时调用 read_agent_entry：\n${sourceCoverage.incompleteSources.map(({ nodeId, sourceEntryId }) => `- ${nodeId} -> ${sourceEntryId}`).join("\n")}`
-        : "";
+      const sourceLookupPrompt = "";
       const historyLookupPrompt = latestCompaction
         ? "较早研究对话已压缩为结构化索引。遇到摘要无法回答的旧决策、证据或产物时，先调用 search_agent_history，再按返回的 Entry ID 调用 read_agent_entry；不要猜测被压缩内容。"
         : "";
@@ -258,7 +232,7 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
         knowledge,
         literature,
         readAgentEntry: async (entryId, offsetChars, maxChars) => {
-          if (!allowedSourceEntries.has(entryId)) throw new Error("Agent entry is not declared by the active Canvas projection");
+          if (!allowedSourceEntries.has(entryId)) throw new Error("Agent entry is not declared by the compacted session index");
           const entry = agentSessionStore.getEntry(entryId);
           const sourceSession = entry ? agentSessionStore.getSession(entry.sessionId) : undefined;
           if (!entry || sourceSession?.projectId !== activeProject.id) throw new Error("Agent entry is outside the active project");
@@ -283,12 +257,12 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
       })];
       const modelContextWindow = liveRoute?.contextWindow ?? 128_000;
       const maxOutputTokens = liveRoute?.maxOutputTokens ?? 8_192;
-      const projectionHash = canvasProjection.projection.projectionHash;
+      const projectionHash = researchProjection.projection.projectionHash;
       const cacheKey = contextAssemblyCache.key({ projectId: activeProject.id, sessionId, projectionHash, prompt, history: historyRecords.map(({ id, role, text }) => [id, role, text]), modelContextWindow, maxOutputTokens, skills: activatedSkills.entries.map(({ name, version }) => [name, version]), tools: activeTools.map((tool) => tool.name) });
       let contextAssembly = contextAssemblyCache.get(cacheKey);
       if (contextAssembly) contextAssembly.trace.cache = "hit";
       else {
-        contextAssembly = assembleContext({ projection: canvasProjection.projection, nodes: new Map(canvasProjection.graph.nodes.flatMap((node) => node.data ? [[node.id, { id: node.id, title: node.data.title, body: node.data.body }] as const] : [])), history: historyRecords, modelContextWindow, maxOutputTokens, fixedPromptTokens: estimateContextTokens(`${coreRules}\n${projectPrompt}\n当前用户问题：${prompt}`), toolSchemaTokens: estimateContextTokens(JSON.stringify(activeTools.map(({ name, description, parameters }) => ({ name, description, parameters })))), skillTokens: estimateContextTokens(activatedSkills.prompt), activatedSkillNames: activatedSkills.skills.map((skill) => skill.name) });
+        contextAssembly = assembleContext({ projection: researchProjection.projection, nodes: new Map(researchProjection.graph.nodes.map((node) => [node.id, { id: node.id, title: node.title, body: node.summary }] as const)), history: historyRecords, modelContextWindow, maxOutputTokens, fixedPromptTokens: estimateContextTokens(`${coreRules}\n${projectPrompt}\n当前用户问题：${prompt}`), toolSchemaTokens: estimateContextTokens(JSON.stringify(activeTools.map(({ name, description, parameters }) => ({ name, description, parameters })))), skillTokens: estimateContextTokens(activatedSkills.prompt), activatedSkillNames: activatedSkills.skills.map((skill) => skill.name) });
         contextAssemblyCache.set(cacheKey, contextAssembly);
       }
       // Binary visual context is deliberately lazy: the current turn is always
@@ -301,7 +275,7 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
         : undefined;
       const runtime = new PiRuntimeAdapter({
         sessionId,
-        systemPrompt: liveRoute ? [coreRules, projectPrompt, contextAssembly.canvasText ? `画布上下文投影：\n${contextAssembly.canvasText}` : "当前画布分支没有可用上下文。", sourceLookupPrompt, historyLookupPrompt, activatedSkills.prompt ? `本轮按需加载的 Skill：\n${activatedSkills.prompt}` : "本轮没有命中额外 Skill。"].filter(Boolean).join("\n") : `你是汐灵 OS 的离线演示 Agent。当前项目：${activeProject.name}。`,
+        systemPrompt: liveRoute ? [coreRules, projectPrompt, contextAssembly.canvasText ? `科研图局部上下文：\n${contextAssembly.canvasText}` : "当前科研图选择没有可用上下文。", sourceLookupPrompt, historyLookupPrompt, activatedSkills.prompt ? `本轮按需加载的 Skill：\n${activatedSkills.prompt}` : "本轮没有命中额外 Skill。"].filter(Boolean).join("\n") : `你是汐灵 OS 的离线演示 Agent。当前项目：${activeProject.name}。`,
         ...(liveRoute ? { route: liveRoute } : {}),
         initialMessages: contextAssembly.history.map((message) => {
           const descriptors = historyAttachments.get(message.id) ?? [];
@@ -376,31 +350,34 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
     },
   });
   const migrationReady = (async () => {
-    let importedMessages = 0; let linkedCanvasNodes = 0;
+    let importedMessages = 0;
     for (const project of knowledge.listProjects()) {
-      const legacyToEntry = new Map<string, string>();
       for (const session of knowledge.listChatSessions(project.id)) {
         const messages = knowledge.listChatMessages(session.id);
         const mapping = agentSessionStore.importLegacyTranscript({ sessionId: session.id, projectId: project.id, messages });
         importedMessages += mapping.size;
-        for (const pair of mapping) legacyToEntry.set(pair[0], pair[1]);
       }
-      await canvasRepository.update(project.id, (graph) => ({ ...graph, nodes: graph.nodes.map((node) => {
-        const legacyId = node.data?.source?.messageId;
-        const sourceEntryId = legacyId ? legacyToEntry.get(legacyId) : undefined;
-        if (!sourceEntryId || !node.data?.source || node.data.source.sourceEntryId === sourceEntryId) return node;
-        linkedCanvasNodes += 1;
-        return { ...node, data: { ...node.data, source: { ...node.data.source, sourceEntryId } } };
-      }) }));
     }
-    const report = { version: 2, status: "completed", importedMessages, linkedCanvasNodes, completedAt: new Date().toISOString(), destructiveRewrite: false, ...(migrationBackup ? { backup: migrationBackup } : {}) };
+    const report = { version: 3, status: "completed", importedMessages, retiredCanvasDetached: true, completedAt: new Date().toISOString(), destructiveRewrite: false, ...(migrationBackup ? { backup: migrationBackup } : {}) };
     await writeFile(migrationReportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
     return report;
   })();
   const workflowProjectionReady = migrationReady.then(() => reconcileAgentWorkflowDrafts({ store: agentSessionStore, ready: projectWorkflowReady, workflows: projectWorkflow }));
+  const researchGraphReconciler = new ResearchGraphReconciler(researchGraph, knowledge, projectWorkflowRepository, agentSessionStore);
+  const researchGraphReady = Promise.all([migrationReady, workflowProjectionReady, projectWorkflowReady]).then(() => researchGraphReconciler.reconcile());
   app.addHook("onClose", async () => { await agentHarness.shutdown(); try { await mcpReady; } catch { /* initialization error is surfaced by settings and Agent routes */ } await mcpGateway.close(); try { await workflowProjectionReady; } finally { agentSessionStore.close(); } });
-  registerWorkspaceRoutes(app, { knowledge, agentSessions: agentSessionStore, agentMigrationReady: migrationReady, onChatSessionCreated: (session) => agentHarness.createSession({ id: session.id, projectId: session.projectId }), onChatSessionArchived: (session) => agentHarness.archiveSession(session.id), validateCanvasContext: async (projectId, context) => projectCanvasContext(projectId, context) });
-  registerAgentCenterRoutes(app, { harness: agentHarness, store: agentSessionStore, ready: Promise.all([migrationReady, workflowProjectionReady]), projectExists: (projectId) => Boolean(knowledge.getProject(projectId)), projectActive: (projectId) => { const project = knowledge.getProject(projectId); return Boolean(project && project.status !== "archived"); }, sessionExists: (sessionId, projectId) => knowledge.getChatSession(sessionId)?.projectId === projectId, acceptedInputModalities: async () => {
+  app.addHook("onClose", async () => {
+    try {
+      await researchGraphReady;
+      await researchGraph.checkpoint();
+    } finally {
+      await researchGraph.close();
+      projectWorkflowRepository.close();
+      scientificCanvasLayout.close();
+    }
+  });
+  registerWorkspaceRoutes(app, { knowledge, agentSessions: agentSessionStore, agentMigrationReady: migrationReady, onChatSessionCreated: (session) => agentHarness.createSession({ id: session.id, projectId: session.projectId }), onChatSessionArchived: (session) => agentHarness.archiveSession(session.id), validateResearchContext: async (projectId, context) => projectResearchContext(projectId, context) });
+  registerAgentCenterRoutes(app, { harness: agentHarness, store: agentSessionStore, ready: Promise.all([migrationReady, workflowProjectionReady]), projectExists: (projectId) => Boolean(knowledge.getProject(projectId)), projectActive: (projectId) => { const project = knowledge.getProject(projectId); return Boolean(project && project.status !== "archived"); }, sessionExists: (sessionId, projectId) => knowledge.getChatSession(sessionId)?.projectId === projectId, sessionTitle: (sessionId) => knowledge.getChatSession(sessionId)?.title, acceptedInputModalities: async () => {
     const status = await modelStatus();
     if (!status.ready || !status.selectedModel) return ["text"];
     return status.selectedModel.inputModalities.filter((modality) => modality === "text" || modality === "image");
@@ -408,36 +385,15 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
   app.addHook("onClose", async () => { try { await projectWorkflowReady; } catch { /* initialization failure is already surfaced by routes */ } });
   const settleProjectWorkflow = async (workflow: NonNullable<ReturnType<typeof projectWorkflow.get>>) => {
     if (workflow.settledAt || workflow.status !== "completed" || !workflow.run || !workflow.review) return workflow;
-    const run = workflow.run;
-    const review = workflow.review;
-    const title = `科研闭环 · ${workflow.request.datasetId} · ${workflow.id.slice(-8)}`;
-    const notes = [
-      `数据源：${workflow.request.connectorId} / ${workflow.request.datasetId}`,
-      `变量：${workflow.request.variables.join(", ")}`,
-      `时间：${workflow.request.time.start} — ${workflow.request.time.end}`,
-      `Reviewer：${review.verdict}`,
-      ...review.checks.map((check) => `${check.passed ? "✓" : "✕"} ${check.id}：${check.detail}`),
-      ...review.limitations.map((item) => `局限：${item}`),
-      ...run.artifactUris.map((uri) => `Artifact：${uri}`),
-    ].join("\n");
-    const item = knowledge.listItems(workflow.projectId).find((candidate) => candidate.kind === "experiment" && candidate.title === title)
-      ?? knowledge.createItem(workflow.projectId, { kind: "experiment", title, notes });
-    if (review.verdict === "accepted") knowledge.updateItem(item.id, { status: "done" });
-    if (!knowledge.listWikiPages(workflow.projectId).some((page) => page.title === title)) {
-      knowledge.createWikiPage({ projectId: workflow.projectId, title, markdown: `# ${title}\n\n${notes}`, artifactUris: run.artifactUris });
-    }
-    const nodeId = `workflow-${workflow.id}`;
-    await canvasRepository.update(workflow.projectId, (graph) => {
-      if (graph.nodes.some((node) => node.id === nodeId)) return graph;
-      const node = { id: nodeId, x: 520, y: 160 + graph.nodes.length * 42, data: { eyebrow: "RESEARCH WORKFLOW", title, body: `数据下载与分析完成。Reviewer：${review.verdict}。${review.limitations[0] ?? ""}`, tone: "data" as const, source: { kind: "workflow" as const, sessionId: workflow.sessionId, workflowId: workflow.id, sourceCallId: workflow.sourceCallId }, artifactUris: run.artifactUris, createdAt: workflow.updatedAt } };
-      const edge = { id: `edge-dataset-${nodeId}`, source: "dataset", target: nodeId, kind: "produced" as const };
-      return { ...graph, nodes: [...graph.nodes, node], edges: [...graph.edges, edge] };
-    });
-    return projectWorkflow.markSettled(workflow.id);
+    await researchGraphReconciler.reconcile();
+    const settled = await projectWorkflow.markSettled(workflow.id);
+    await researchGraphReconciler.reconcile();
+    return settled;
   };
 
   registerConnectorRoutes(app, { root: gate4Root, mode: connectorMode, credentials, credentialsReady, probe: connectorProbe, workflow: connectorWorkflow, workflowReady: connectorReady, metadata: connectorMetadata, activeRuns: activeConnectorRuns });
   registerWorkflowRoutes(app, { root: gate4Root, workflow: projectWorkflow, ready: projectWorkflowReady, projects: knowledge, conversations: knowledge, settle: settleProjectWorkflow });
+  registerResearchGraphRoutes(app, { graph: researchGraph, layout: scientificCanvasLayout, ready: researchGraphReady, reconcile: () => researchGraphReconciler.reconcile(), projectExists: (projectId) => Boolean(knowledge.getProject(projectId)) });
 
   app.get("/health", async () => ({
     status: "ok",
@@ -451,7 +407,7 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     if (!knowledge.getProject(parsed.data.projectId)) return reply.code(404).send({ error: "Project not found" });
     try {
-      const { projection } = await projectCanvasContext(parsed.data.projectId, { activeNodeId: parsed.data.activeNodeId, quotedNodeIds: parsed.data.quotedNodeIds, ...(parsed.data.capabilityQuery ? { capabilityQuery: parsed.data.capabilityQuery } : {}) });
+      const { projection } = await projectResearchContext(parsed.data.projectId, { activeNodeId: parsed.data.activeNodeId, quotedNodeIds: parsed.data.quotedNodeIds, ...(parsed.data.capabilityQuery ? { capabilityQuery: parsed.data.capabilityQuery } : {}) });
       return projection;
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) }); }
   });

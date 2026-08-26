@@ -11,6 +11,7 @@ const commands = [
   ["node", ["scripts/gate-4.5-c-migration-smoke.mjs"]],
   ["node", ["scripts/gate-4.5-d-main-path-smoke.mjs"]],
   ["node", ["scripts/mcp-adapter-smoke.mjs"]],
+  ["node", ["scripts/research-graph-smoke.mjs"]],
   ["node", ["scripts/platform-smoke.mjs"]],
 ];
 

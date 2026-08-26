@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CanvasEdge, CanvasNode, ContextCapsule } from "@xiling/contracts";
-import { ContextAssemblyCache, ContextCapacityError, assembleContext, createNodeContextCapsule, normalizeContextHistory, projectContext } from "./index.js";
+import { ContextAssemblyCache, ContextCapacityError, assembleContext, createNodeContextCapsule, normalizeContextHistory, projectContext, projectResearchGraphContext } from "./index.js";
 
 const now = "2026-08-23T00:00:00.000Z";
 const node = (id: string, parentId?: string): CanvasNode => ({
@@ -14,6 +14,20 @@ const node = (id: string, parentId?: string): CanvasNode => ({
 });
 
 describe("projectContext", () => {
+  it("projects only a bounded local neighbourhood from a cyclic Research Graph", () => {
+    const graph = {
+      projectId: "p1", view: "all" as const, generatedAt: now,
+      nodes: ["question", "claim", "paper", "fragment", "artifact", "unrelated"].map((id, index) => ({ id, projectId: "p1", kind: index === 0 ? "ResearchQuestion" as const : "Claim" as const, title: id, summary: id, revision: 1, contentHash: id, properties: {}, createdAt: now, updatedAt: now })),
+      relations: [
+        ["question", "claim", "CONTAINS"], ["claim", "paper", "BASED_ON"], ["paper", "fragment", "HAS_FRAGMENT"], ["fragment", "claim", "ASSERTS"], ["claim", "artifact", "EVALUATES"],
+      ].map(([sourceId, targetId, kind], index) => ({ id: `r${index}`, projectId: "p1", kind: kind as "CONTAINS", sourceId: sourceId!, targetId: targetId!, properties: {}, createdAt: now, updatedAt: now })),
+    };
+    const projection = projectResearchGraphContext({ activeNodeId: "claim", quotedNodeIds: ["unrelated"] }, graph, new Map(), [], { maxNeighbourNodes: 2, maxDepth: 2 });
+    expect(projection.activeBranchNodeIds.at(-1)).toBe("claim");
+    expect(projection.activeBranchNodeIds).toHaveLength(3);
+    expect(projection.quotedNodeIds).toEqual(["unrelated"]);
+    expect(projection.explanation[0]).toContain("局部邻域 2 个");
+  });
   it("loads only the active ancestry and explicit cross-branch quotes", () => {
     const nodes = new Map([
       ["root", node("root")],

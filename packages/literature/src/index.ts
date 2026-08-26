@@ -56,7 +56,7 @@ export function buildLiteratureGraph(papers: PaperRecord[], seedIds: string[], o
 }
 
 export function createOceanHeatwaveFixture(): { papers: PaperRecord[]; seedIds: string[] } {
-  const paper = (id: string, title: string, year: number, citationCount: number, references: string[], authors: string[]): PaperRecord => ({ id, title, year, citationCount, references, authors, source: "fixture", url: `https://example.invalid/papers/${id}` });
+  const paper = (id: string, title: string, year: number, citationCount: number, references: string[], authors: string[]): PaperRecord => ({ id, title, year, citationCount, references, authors, source: "fixture", url: `https://example.invalid/papers/${id}`, abstract: `${title}。该固定测试论文用于验证文献发现、阅读标注与科研证据提升闭环。` });
   return {
     seedIds: ["seed-mhw"],
     papers: [

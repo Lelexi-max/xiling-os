@@ -31,7 +31,9 @@ Web command
 - Workflow 写文件按快照串行保存，避免并发 rename 的旧写覆盖新写。
 - Approval 保存当前 request hash；Run 只接受与批准哈希一致的计划。
 
-Agent SQLite 与 Workflow JSON 仍不是同一事务。当前单机模块化单体通过“durable source event + stable idempotency key + reconcile”获得可恢复的最终一致性；未来只有在多进程写入时才需要 SQLite outbox 或统一事务存储。
+> RG-2 更新：本段是 Gate 4.5-D 当时结论，已被 [ADR 0027](../adr/0027-durable-research-graph-projection.md) 替代。Workflow 已迁入 SQLite 并采用同事务 outbox。
+
+Agent SQLite 与当时的 Workflow JSON 不是同一事务。Gate 4.5-D 先通过“durable source event + stable idempotency key + reconcile”获得可恢复的最终一致性；RG-2 已进一步补齐 SQLite outbox 与 Research Graph applied ledger。
 
 ## 作用域与前端边界
 

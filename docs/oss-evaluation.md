@@ -28,6 +28,8 @@
 | 地图 | MapLibre GL/deck.gl | BSD/MIT | Web 地图与图层 | 采用 |
 | PDF | PDF.js/pypdf | Apache-2.0/BSD | 渲染与抽取 | 采用 |
 | 数据库 | SQLite/Drizzle/FTS5 | Public Domain/Apache | 元数据、迁移、全文搜索 | 采用 |
+| Research Graph | LadybugDB | MIT | 嵌入式类型化属性图、Cypher、ACID/WAL 与图算法；RG-0 技术门禁通过后采用 | 有条件采用（0.19.1） |
+| Research Graph 回退 | Neo4j Community | GPL-3.0 | 仅在 Ladybug 跨平台或恢复门禁失败时作为隔离容器适配器，不与默认实现同时维护 | 备选 |
 | Windows 后端 | WSL2 + Docker Engine API | 平台组件/Apache Go SDK | 运行环境和控制接口 | 采用 |
 
 ## 明确自研项及原因

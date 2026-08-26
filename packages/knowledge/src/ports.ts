@@ -41,8 +41,22 @@ export interface WikiStore {
   archiveWikiPage(id: string): boolean;
 }
 export interface EvidenceStore {
-  saveEvidence(projectId: string, paper: PaperRecord, note?: string): EvidenceRecord;
+  saveEvidence(projectId: string, paper: PaperRecord, note?: string, stance?: EvidenceRecord["stance"], confidence?: number): EvidenceRecord;
   listEvidence(projectId?: string): EvidenceRecord[];
 }
-export type KnowledgeStore = ProjectStore & ProjectItemStore & ConversationStore & ContextCapsuleStore & WikiStore & EvidenceStore;
+export interface ResearchProjectionOutboxRecord {
+  id: string;
+  projectionKey: string;
+  projectId: string;
+  sourceId: string;
+  eventType: "knowledge.project.upserted" | "knowledge.wiki.revision.created" | "knowledge.evidence.saved";
+  payload: unknown;
+  createdAt: string;
+  appliedAt?: string;
+}
+export interface ResearchProjectionOutboxStore {
+  listProjectionOutbox(limit?: number): ResearchProjectionOutboxRecord[];
+  markProjectionOutboxApplied(projectionKeys: string[], appliedAt?: string): number;
+}
+export type KnowledgeStore = ProjectStore & ProjectItemStore & ConversationStore & ContextCapsuleStore & WikiStore & EvidenceStore & ResearchProjectionOutboxStore;
 export type AgentKnowledgeReader = ProjectItemStore & Pick<WikiStore, "listWikiPages" | "getWikiPage"> & Pick<EvidenceStore, "listEvidence">;

@@ -17,7 +17,7 @@ try {
   const restored = createApp({ dataRoot: root });
   const migrated = await restored.inject({ method: "GET", url: `/api/gate4/chat-sessions/${sessionId}/messages` });
   if (migrated.statusCode !== 200 || migrated.json()[0]?.id === legacy.id) throw new Error("Legacy transcript was not imported into Agent entries");
-  const started = await restored.inject({ method: "POST", url: "/api/agent-center/runs", payload: { sessionId, projectId: "ocean-heatwave", prompt: "continue", clientCommandId: "formal-smoke", context: { activeNodeId: "decompose", quotedNodeIds: [] } } });
+  const started = await restored.inject({ method: "POST", url: "/api/agent-center/runs", payload: { sessionId, projectId: "ocean-heatwave", prompt: "continue", clientCommandId: "formal-smoke", context: { activeNodeId: "research-question:ocean-heatwave", quotedNodeIds: [] } } });
   const runId = started.json().run?.id;
   if (started.statusCode !== 202 || !runId) throw new Error("Formal Agent command was not accepted");
   let snapshot;

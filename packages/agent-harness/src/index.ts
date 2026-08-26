@@ -332,6 +332,11 @@ export class SqliteAgentSessionStore {
     return row ? { id: row.id, projectId: row.project_id, status: row.status, formatVersion: row.format_version, createdAt: row.created_at, updatedAt: row.updated_at } : undefined;
   }
 
+  listProjectSessions(projectId: string): AgentSessionRecord[] {
+    const rows = this.sqlite.prepare("SELECT id FROM agent_sessions WHERE project_id = ? ORDER BY updated_at DESC, created_at DESC").all(projectId) as Array<{ id: string }>;
+    return rows.map((row) => this.getSession(row.id)).filter((session): session is AgentSessionRecord => Boolean(session));
+  }
+
   archiveSession(id: string): AgentSessionRecord | undefined {
     const session = this.getSession(id);
     if (!session) return undefined;

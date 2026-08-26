@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { AGENT_SESSION_FORMAT_VERSION, type ResearchAgentHarness, type SqliteAgentSessionStore } from "@xiling/agent-harness";
 import type { ModelModality } from "@xiling/contracts";
+import { projectAgentExecutionGraph } from "../../agent-execution-graph.js";
 
 const id = z.string().min(1).max(160);
 const supportedImageMimeTypes = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -29,11 +30,12 @@ export interface AgentCenterRouteDependencies {
   projectExists(projectId: string): boolean;
   projectActive(projectId: string): boolean;
   sessionExists(sessionId: string, projectId: string): boolean;
+  sessionTitle?(sessionId: string): string | undefined;
   acceptedInputModalities(): Promise<ModelModality[]>;
 }
 
 export function registerAgentCenterRoutes(app: FastifyInstance, dependencies: AgentCenterRouteDependencies): void {
-  const { harness, store, ready, projectExists, projectActive, sessionExists, acceptedInputModalities } = dependencies;
+  const { harness, store, ready, projectExists, projectActive, sessionExists, sessionTitle, acceptedInputModalities } = dependencies;
 
   const sessionInProject = (sessionId: string, projectId: string) => {
     const session = store.getSession(sessionId);
@@ -53,9 +55,23 @@ export function registerAgentCenterRoutes(app: FastifyInstance, dependencies: Ag
     sessionFormat: AGENT_SESSION_FORMAT_VERSION,
     recoveredOnStartup: harness.recoveredOnStartup,
     formalChatMigrated: true,
-    canvasSourceEntries: true,
+    researchGraphContext: true,
     workflowProjection: "durable-server-owned",
   }));
+
+  app.get("/api/agent-center/graph", async (request, reply) => {
+    await ready;
+    const query = z.object({ projectId: id, scope: z.enum(["session", "project"]).default("project"), sessionId: id.optional() }).safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: "Invalid Agent graph request" });
+    if (!projectExists(query.data.projectId)) return reply.code(404).send({ error: "Project not found" });
+    if (query.data.scope === "session" && (!query.data.sessionId || !sessionInProject(query.data.sessionId, query.data.projectId))) return reply.code(404).send({ error: "Agent session not found in project" });
+    return projectAgentExecutionGraph(store, {
+      projectId: query.data.projectId,
+      scope: query.data.scope,
+      ...(query.data.sessionId ? { sessionId: query.data.sessionId } : {}),
+      ...(sessionTitle ? { sessionTitle } : {}),
+    });
+  });
 
   app.post("/api/agent-center/sessions", async (request, reply) => {
     const parsed = z.object({ id: id.optional(), projectId: id }).safeParse(request.body);

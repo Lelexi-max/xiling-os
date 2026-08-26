@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import cytoscape, { type Core } from "cytoscape";
-import type { CanvasGraphDocument, EvidenceRecord, LiteratureGraph, LiteratureGraphNode, LiteratureSearchResponse } from "@xiling/contracts";
+import type { EvidenceRecord, LiteratureGraph, LiteratureGraphNode, LiteratureSearchResponse } from "@xiling/contracts";
 
 const edgeColors = {
   citation: "#4f7d88",
@@ -9,14 +9,17 @@ const edgeColors = {
   "bibliographic-coupling": "#36a48f",
 };
 
-export function PaperGraphView({ projectId }: { projectId: string }) {
+export function PaperGraphView({ projectId, onNavigate }: { projectId: string; onNavigate?: (view: "canvas") => void }) {
   const container = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
   const [graph, setGraph] = useState<LiteratureGraph>();
   const [selected, setSelected] = useState<LiteratureGraphNode>();
   const [edgeFilter, setEdgeFilter] = useState<keyof typeof edgeColors | "all">("all");
-  const [evidenceIds, setEvidenceIds] = useState<Set<string>>(new Set());
-  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [evidence, setEvidence] = useState<EvidenceRecord[]>([]);
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [stanceDrafts, setStanceDrafts] = useState<Record<string, EvidenceRecord["stance"]>>({});
+  const [confidenceDrafts, setConfidenceDrafts] = useState<Record<string, number>>({});
+  const [listMode, setListMode] = useState<"discovery" | "evidence">("discovery");
   const [actionStatus, setActionStatus] = useState("");
   const [query, setQuery] = useState("");
   const [searchStatus, setSearchStatus] = useState("");
@@ -43,21 +46,22 @@ export function PaperGraphView({ projectId }: { projectId: string }) {
   }, []);
 
   useEffect(() => {
-    void Promise.all([
-      fetch(`/api/gate4/evidence?projectId=${encodeURIComponent(projectId)}`).then((response) => response.json()) as Promise<EvidenceRecord[]>,
-      fetch(`/api/gate4/canvas/layout?projectId=${encodeURIComponent(projectId)}`).then((response) => response.json()) as Promise<CanvasGraphDocument>,
-    ]).then(([records, graph]) => { setEvidenceIds(new Set(records.map((record) => record.paper.id))); setPinnedIds(new Set(graph.nodes.filter((node) => node.id.startsWith("paper-")).map((node) => node.id.slice(6)))); });
+    void fetch(`/api/gate4/evidence?projectId=${encodeURIComponent(projectId)}`).then((response) => response.json()).then((records: EvidenceRecord[]) => {
+      setEvidence(records);
+      setNoteDrafts(Object.fromEntries(records.map((record) => [record.paper.id, record.note])));
+      setStanceDrafts(Object.fromEntries(records.map((record) => [record.paper.id, record.stance])));
+      setConfidenceDrafts(Object.fromEntries(records.map((record) => [record.paper.id, record.confidence])));
+    });
   }, [projectId]);
 
   const saveEvidence = async () => {
-    if (!selected) return; setActionStatus("保存证据中…");
-    const response = await fetch("/api/gate4/evidence", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId, paper: selected }) });
-    if (response.ok) { setEvidenceIds((current) => new Set(current).add(selected.id)); setActionStatus("已加入证据库"); } else setActionStatus("保存失败");
-  };
-  const pinToCanvas = async () => {
-    if (!selected) return; setActionStatus("固定节点中…");
-    const response = await fetch("/api/gate4/canvas/papers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId, paper: selected }) });
-    if (response.ok) { setPinnedIds((current) => new Set(current).add(selected.id)); setActionStatus("已固定到科研画布"); } else setActionStatus("固定失败");
+    if (!selected) return; setActionStatus("正在生成可追溯证据…");
+    const response = await fetch("/api/gate4/evidence", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId, paper: selected, note: noteDrafts[selected.id] ?? "", stance: stanceDrafts[selected.id] ?? "insufficient", confidence: confidenceDrafts[selected.id] ?? 0.5 }) });
+    if (response.ok) {
+      const record = await response.json() as EvidenceRecord;
+      setEvidence((current) => [record, ...current.filter((item) => item.id !== record.id)]);
+      setActionStatus("已提升为项目证据，科研画布会自动更新");
+    } else setActionStatus("证据提升失败");
   };
   const searchRemote = async () => {
     const normalized = query.trim(); if (normalized.length < 2) { setSearchStatus("请输入至少 2 个字符"); return; }
@@ -133,14 +137,20 @@ export function PaperGraphView({ projectId }: { projectId: string }) {
   }, [graph, edgeFilter]);
 
   if (!graph) return <div className="view-loading">按需加载文献图数据与 Cytoscape…</div>;
+  const evidenceByPaper = new Map(evidence.map((record) => [record.paper.id, record]));
+  const displayedPapers: LiteratureGraphNode[] = listMode === "discovery" ? graph.nodes : evidence.map((record) => {
+    const known = graph.nodes.find((paper) => paper.id === record.paper.id);
+    return { ...record.paper, seed: known?.seed ?? false, relevance: known?.relevance ?? 0 };
+  });
+  const selectedEvidence = selected ? evidenceByPaper.get(selected.id) : undefined;
   const graphYears = graph.nodes.map((node) => node.year);
   const graphMinYear = Math.min(...graphYears);
   const graphMaxYear = Math.max(...graphYears);
   return <div className="paper-graph-view">
     <aside className="paper-list">
       <div className="paper-list-head"><small>发现</small><b>{graph.nodes.length} 篇论文</b></div>
-      <div className="paper-list-tabs"><button className="active">相似工作</button><button>前置工作</button><button>后续工作</button></div>
-      <div className="paper-list-scroll">{[...graph.nodes].sort((a, b) => Number(b.seed) - Number(a.seed) || b.relevance - a.relevance).map((paper) => <button key={paper.id} className={`${selected?.id === paper.id ? "active" : ""} ${paper.seed ? "seed" : ""}`} onClick={() => focusPaper(paper)}><small>{paper.seed ? "起点论文" : `${paper.year} · ${paper.citationCount} 次引用`}</small><b>{paper.title}</b><span>{paper.authors.slice(0, 2).join(" · ")}</span></button>)}</div>
+      <div className="paper-list-tabs"><button className={listMode === "discovery" ? "active" : ""} onClick={() => setListMode("discovery")}>发现结果</button><button className={listMode === "evidence" ? "active" : ""} onClick={() => { setListMode("evidence"); if (evidence[0]) setSelected({ ...evidence[0].paper, seed: false, relevance: graph.nodes.find((paper) => paper.id === evidence[0]?.paper.id)?.relevance ?? 0 }); }}>项目证据 {evidence.length}</button></div>
+      <div className="paper-list-scroll">{displayedPapers.length ? [...displayedPapers].sort((a, b) => Number(b.seed) - Number(a.seed) || b.relevance - a.relevance).map((paper) => <button key={paper.id} className={`${selected?.id === paper.id ? "active" : ""} ${paper.seed ? "seed" : ""}`} onClick={() => focusPaper(paper)}><small>{paper.seed ? "起点论文" : evidenceByPaper.has(paper.id) ? "项目证据" : `${paper.year} · ${paper.citationCount} 次引用`}</small><b>{paper.title}</b><span>{paper.authors.slice(0, 2).join(" · ")}</span></button>) : <p className="paper-list-empty">尚未提升任何项目证据。</p>}</div>
     </aside>
     <section className="paper-graph-main">
       <div className="paper-graph-toolbar">
@@ -161,10 +171,13 @@ export function PaperGraphView({ projectId }: { projectId: string }) {
       <small>{selected?.seed ? "起点论文" : "关联论文"}</small>
       <h2>{selected?.title}</h2>
       <p>{selected?.authors.join(" · ")} · {selected?.year}</p>
-      <div className="paper-open-row"><span>{selected?.citationCount} 次引用</span><button aria-label="保存论文">♡ 保存</button></div>
-      <div className="paper-abstract"><b>摘要</b><p>该研究讨论上层海洋结构、热量收支与海洋热浪持续性之间的联系，并为当前机制假设提供可追溯的观测依据。选择论文后可进一步读取完整摘要与证据片段。</p></div>
+      <div className="paper-open-row"><span>{selected?.citationCount} 次引用</span>{selected?.url ? <a href={selected.url} target="_blank" rel="noreferrer">打开原文 ↗</a> : <span>暂无原文链接</span>}</div>
+      <div className="paper-abstract"><b>摘要</b><p>{selected?.abstract || "当前数据源未返回摘要。汐灵不会用生成内容冒充论文摘要；可打开原文继续阅读。"}</p></div>
       <dl><div><dt>相关度</dt><dd>{selected?.relevance.toFixed(2)}</dd></div><div><dt>数据来源</dt><dd>{selected?.source}</dd></div></dl>
-      <button disabled={!selected || evidenceIds.has(selected.id)} onClick={() => void saveEvidence()}>{selected && evidenceIds.has(selected.id) ? "✓ 已加入证据库" : "加入证据库"}</button><button disabled={!selected || pinnedIds.has(selected.id)} onClick={() => void pinToCanvas()}>{selected && pinnedIds.has(selected.id) ? "✓ 已固定到科研画布" : "固定到科研画布"}</button>
+      <label className="paper-annotation"><span>阅读标注</span><textarea aria-label="论文阅读标注" disabled={Boolean(selectedEvidence)} placeholder="记录关键方法、证据片段、局限或与当前问题的关系…" value={selected ? noteDrafts[selected.id] ?? selectedEvidence?.note ?? "" : ""} onChange={(event) => { if (selected) setNoteDrafts((current) => ({ ...current, [selected.id]: event.target.value })); }} /></label>
+      <div className="paper-evidence-semantics"><label><span>对研究问题的作用</span><select aria-label="证据立场" disabled={Boolean(selectedEvidence)} value={selected ? stanceDrafts[selected.id] ?? selectedEvidence?.stance ?? "insufficient" : "insufficient"} onChange={(event) => { if (selected) setStanceDrafts((current) => ({ ...current, [selected.id]: event.target.value as EvidenceRecord["stance"] })); }}><option value="supports">支持</option><option value="refutes">反驳</option><option value="qualifies">限定条件</option><option value="insufficient">证据尚不充分</option></select></label><label><span>证据置信度</span><select aria-label="证据置信度" disabled={Boolean(selectedEvidence)} value={String(selected ? confidenceDrafts[selected.id] ?? selectedEvidence?.confidence ?? 0.5 : 0.5)} onChange={(event) => { if (selected) setConfidenceDrafts((current) => ({ ...current, [selected.id]: Number(event.target.value) })); }}><option value="0.25">25% · 初步</option><option value="0.5">50% · 中等</option><option value="0.75">75% · 较强</option><option value="0.9">90% · 很强</option></select></label></div>
+      <button className="paper-promote" disabled={!selected || Boolean(selectedEvidence)} onClick={() => void saveEvidence()}>{selectedEvidence ? "✓ 已进入 Research Graph" : "提升为项目证据"}</button>
+      {selectedEvidence ? <button onClick={() => onNavigate?.("canvas")}>在科研画布中查看 →</button> : null}
       {actionStatus ? <p className="paper-action-status">{actionStatus}</p> : null}
       <div className="algorithm-note"><b>算法透明</b><p>{graph.algorithm}</p><small>{graph.nodes.length} nodes · {graph.edges.length} edges · {graph.fetchedAt}</small></div>
     </aside>

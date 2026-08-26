@@ -1,12 +1,30 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { ConnectorMetadataProbe, ConnectorWorkflowService } from "@xiling/connectors";
 import { preflightConnector } from "@xiling/connectors";
 import type { OceanSubsetRequest, ProjectResearchWorkflow, ResourceUri, ReviewerReport } from "@xiling/contracts";
 
 export interface ProjectAnalysisRunner {
   execute(workflow: ProjectResearchWorkflow, signal?: AbortSignal): Promise<{ artifactUris: ResourceUri[]; checks: ReviewerReport["checks"]; limitations: string[] }>;
+}
+
+export interface ProjectWorkflowRepository {
+  load(): Promise<ProjectResearchWorkflow[]>;
+  save(workflows: ProjectResearchWorkflow[]): Promise<void>;
+}
+
+export interface WorkflowProjectionOutboxRecord {
+  id: string;
+  projectionKey: string;
+  projectId: string;
+  sourceId: string;
+  eventType: "workflow.snapshot.updated";
+  workflow: ProjectResearchWorkflow;
+  createdAt: string;
+  appliedAt?: string;
 }
 
 export class JsonProjectWorkflowRepository {
@@ -21,6 +39,90 @@ export class JsonProjectWorkflowRepository {
     await writeFile(temporary, `${JSON.stringify(workflows, null, 2)}\n`, "utf8");
     await rename(temporary, this.path);
   }
+}
+
+export class SqliteProjectWorkflowRepository implements ProjectWorkflowRepository {
+  private readonly sqlite: DatabaseSync;
+
+  constructor(path: string) {
+    mkdirSync(dirname(path), { recursive: true });
+    this.sqlite = new DatabaseSync(path);
+    this.sqlite.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 5000;
+      CREATE TABLE IF NOT EXISTS project_workflows (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS project_workflows_project_updated ON project_workflows(project_id, updated_at DESC);
+      CREATE TABLE IF NOT EXISTS research_projection_outbox (
+        id TEXT PRIMARY KEY,
+        projection_key TEXT NOT NULL UNIQUE,
+        project_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        applied_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS workflow_projection_outbox_pending ON research_projection_outbox(applied_at, created_at);
+    `);
+  }
+
+  async load(): Promise<ProjectResearchWorkflow[]> {
+    const rows = this.sqlite.prepare("SELECT payload_json FROM project_workflows ORDER BY updated_at DESC, id").all() as Array<{ payload_json: string }>;
+    return rows.map((row) => JSON.parse(row.payload_json) as ProjectResearchWorkflow);
+  }
+
+  async save(workflows: ProjectResearchWorkflow[]): Promise<void> {
+    this.sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      const upsert = this.sqlite.prepare(`
+        INSERT INTO project_workflows (id, project_id, status, payload_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET project_id = excluded.project_id, status = excluded.status,
+          payload_json = excluded.payload_json, updated_at = excluded.updated_at
+      `);
+      const outbox = this.sqlite.prepare(`
+        INSERT OR IGNORE INTO research_projection_outbox
+          (id, projection_key, project_id, source_id, event_type, payload_json, created_at, applied_at)
+        VALUES (?, ?, ?, ?, 'workflow.snapshot.updated', ?, ?, NULL)
+      `);
+      for (const workflow of workflows) {
+        const payload = JSON.stringify(workflow);
+        const digest = createHash("sha256").update(payload).digest("hex");
+        const id = `workflow-outbox-${digest}`;
+        const projectionKey = `workflow:snapshot:v1:${workflow.id}:${digest}`;
+        upsert.run(workflow.id, workflow.projectId, workflow.status, payload, workflow.createdAt, workflow.updatedAt);
+        outbox.run(id, projectionKey, workflow.projectId, workflow.id, payload, workflow.updatedAt);
+      }
+      this.sqlite.exec("COMMIT");
+    } catch (error) {
+      this.sqlite.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  listProjectionOutbox(limit = 100): WorkflowProjectionOutboxRecord[] {
+    const rows = this.sqlite.prepare(`
+      SELECT id, projection_key, project_id, source_id, event_type, payload_json, created_at, applied_at
+      FROM research_projection_outbox WHERE applied_at IS NULL ORDER BY rowid LIMIT ?
+    `).all(Math.max(1, Math.min(limit, 1000))) as Array<{ id: string; projection_key: string; project_id: string; source_id: string; event_type: "workflow.snapshot.updated"; payload_json: string; created_at: string; applied_at: string | null }>;
+    return rows.map((row) => ({ id: row.id, projectionKey: row.projection_key, projectId: row.project_id, sourceId: row.source_id, eventType: row.event_type, workflow: JSON.parse(row.payload_json) as ProjectResearchWorkflow, createdAt: row.created_at, ...(row.applied_at ? { appliedAt: row.applied_at } : {}) }));
+  }
+
+  markProjectionOutboxApplied(projectionKeys: string[], appliedAt = new Date().toISOString()): number {
+    const unique = [...new Set(projectionKeys)];
+    if (!unique.length) return 0;
+    const placeholders = unique.map(() => "?").join(", ");
+    return Number(this.sqlite.prepare(`UPDATE research_projection_outbox SET applied_at = ? WHERE applied_at IS NULL AND projection_key IN (${placeholders})`).run(appliedAt, ...unique).changes);
+  }
+
+  close(): void { this.sqlite.close(); }
 }
 
 export class FixtureProjectAnalysisRunner implements ProjectAnalysisRunner {
@@ -51,7 +153,7 @@ export class ProjectWorkflowService {
   private readonly active = new Map<string, AbortController>();
   private persistTail: Promise<void> = Promise.resolve();
   constructor(
-    private readonly repository: JsonProjectWorkflowRepository,
+    private readonly repository: ProjectWorkflowRepository,
     private readonly connectorWorkflow: ConnectorWorkflowService,
     private readonly metadataProbe: ConnectorMetadataProbe,
     private readonly analysisRunner: ProjectAnalysisRunner,

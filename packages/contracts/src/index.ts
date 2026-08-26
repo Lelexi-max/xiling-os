@@ -3,6 +3,185 @@ export type ResourceUri =
   | `artifact://${string}`
   | `dataset://${string}`;
 
+export type ResearchEntityKind =
+  | "Project"
+  | "ResearchQuestion"
+  | "Hypothesis"
+  | "Claim"
+  | "ClaimRevision"
+  | "EvidenceAssertion"
+  | "Paper"
+  | "SourceFragment"
+  | "Dataset"
+  | "DatasetSnapshot"
+  | "ResearchPlan"
+  | "Approval"
+  | "ResearchRun"
+  | "Artifact"
+  | "ArtifactVersion"
+  | "LifecycleEvent"
+  | "ReviewReport"
+  | "WikiRevisionRef"
+  | "Actor";
+
+export type EvidenceStance = "supports" | "refutes" | "qualifies" | "insufficient";
+
+export type ResearchEntityStatus =
+  | "draft"
+  | "accepted"
+  | "rejected"
+  | "superseded"
+  | "pending"
+  | "approved"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "staging"
+  | "verified"
+  | "available"
+  | "quarantined"
+  | "active"
+  | "archived";
+
+export interface ResearchGraphEntity {
+  id: string;
+  projectId: string;
+  kind: ResearchEntityKind;
+  title: string;
+  summary: string;
+  status?: ResearchEntityStatus;
+  revision: number;
+  uri?: ResourceUri | string;
+  contentHash: string;
+  stance?: EvidenceStance;
+  confidence?: number;
+  sourceLocator?: string;
+  properties: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ResearchRelationKind =
+  | "CONTAINS"
+  | "HAS_REVISION"
+  | "HAS_FRAGMENT"
+  | "CITES"
+  | "ASSERTS"
+  | "BASED_ON"
+  | "USED"
+  | "GENERATED"
+  | "DERIVED_FROM"
+  | "EVALUATES"
+  | "DOCUMENTS"
+  | "SUPERSEDES"
+  | "HAS_VERSION"
+  | "TRANSITIONED_BY"
+  | "ASSOCIATED_WITH"
+  | "REFERENCES";
+
+export interface ResearchGraphRelation {
+  id: string;
+  projectId: string;
+  kind: ResearchRelationKind;
+  sourceId: string;
+  targetId: string;
+  properties: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ResearchGraphView = "all" | "literature" | "evidence" | "provenance" | "artifacts";
+
+export interface ResearchGraphProjection {
+  projectId: string;
+  view: ResearchGraphView;
+  nodes: ResearchGraphEntity[];
+  relations: ResearchGraphRelation[];
+  generatedAt: string;
+}
+
+/**
+ * Presentation-only state for the Scientific Canvas. Coordinates and viewport
+ * are intentionally stored outside the Research Graph so moving a node can
+ * never mutate scientific facts or provenance.
+ */
+export interface ScientificCanvasPosition {
+  entityId: string;
+  x: number;
+  y: number;
+}
+
+export interface ScientificCanvasViewport {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+export interface ScientificCanvasLayout {
+  projectId: string;
+  view: ResearchGraphView;
+  revision: number;
+  positions: ScientificCanvasPosition[];
+  viewport?: ScientificCanvasViewport;
+  updatedAt?: string;
+}
+
+/**
+ * Read-only projection of the durable Agent Harness journal. This graph is
+ * deliberately separate from ResearchGraphProjection: it explains how the
+ * Agent worked, not whether a scientific claim is true.
+ */
+export type AgentExecutionGraphScope = "session" | "project";
+export type AgentExecutionNodeKind = "project" | "session" | "run" | "model" | "tool" | "message" | "compaction";
+export type AgentExecutionNodeStatus = "active" | "archived" | "queued" | "running" | "completed" | "failed" | "cancelled" | "suspended";
+export type AgentExecutionEdgeKind = "contains" | "started" | "continued" | "invoked" | "returned" | "produced" | "compacted";
+
+export interface AgentExecutionNode extends Record<string, unknown> {
+  id: string;
+  projectId: string;
+  kind: AgentExecutionNodeKind;
+  title: string;
+  summary: string;
+  status?: AgentExecutionNodeStatus;
+  timestamp: string;
+  source: {
+    sessionId?: string;
+    runId?: string;
+    operationId?: string;
+    entryId?: string;
+  };
+  metrics?: {
+    totalTokens?: number;
+    cost?: number;
+    durationMs?: number;
+  };
+}
+
+export interface AgentExecutionEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: AgentExecutionEdgeKind;
+  label?: string;
+}
+
+export interface AgentExecutionGraphProjection {
+  projectId: string;
+  scope: AgentExecutionGraphScope;
+  sessionId?: string;
+  nodes: AgentExecutionNode[];
+  edges: AgentExecutionEdge[];
+  generatedAt: string;
+  truncated: boolean;
+  counts: {
+    sessions: number;
+    runs: number;
+    operations: number;
+    entries: number;
+  };
+}
+
 export type CanvasNodeKind =
   | "prompt"
   | "response"
@@ -32,42 +211,6 @@ export interface CanvasEdge {
   source: string;
   target: string;
   kind: CanvasEdgeKind;
-}
-
-export interface CanvasLayoutNodeData extends Record<string, unknown> {
-  eyebrow: string;
-  title: string;
-  body: string;
-  tone: "prompt" | "answer" | "paper" | "data" | "note";
-  source?: CanvasNodeSource | undefined;
-  artifactUris?: ResourceUri[] | undefined;
-  createdAt?: string | undefined;
-}
-
-export interface CanvasNodeSource {
-  kind: "project" | "chat-message" | "paper" | "workflow" | "note";
-  sessionId?: string | undefined;
-  messageId?: string | undefined;
-  sourceEntryId?: string | undefined;
-  runId?: string | undefined;
-  paperId?: string | undefined;
-  workflowId?: string | undefined;
-  sourceCallId?: string | undefined;
-}
-
-export interface CanvasLayoutNode {
-  id: string;
-  x: number;
-  y: number;
-  data?: CanvasLayoutNodeData | undefined;
-}
-
-export interface CanvasGraphDocument {
-  version: 2;
-  /** Monotonic storage revision used for optimistic concurrency. */
-  revision?: number | undefined;
-  nodes: CanvasLayoutNode[];
-  edges: CanvasEdge[];
 }
 
 export interface CanvasBranchContext {
@@ -405,6 +548,7 @@ export interface PaperRecord {
   references: string[];
   source: "semantic-scholar" | "openalex" | "fixture";
   url?: string;
+  abstract?: string;
 }
 
 export interface LiteratureGraphNode extends PaperRecord {
@@ -533,6 +677,8 @@ export interface EvidenceRecord {
   projectId: string;
   paper: PaperRecord;
   note: string;
+  stance: EvidenceStance;
+  confidence: number;
   createdAt: string;
 }
 

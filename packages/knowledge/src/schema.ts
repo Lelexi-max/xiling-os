@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const projects = sqliteTable("projects", {
   id: text().primaryKey(),
@@ -46,6 +46,8 @@ export const evidence = sqliteTable("evidence", {
   paperId: text("paper_id").notNull(),
   paperJson: text("paper_json").notNull(),
   note: text().notNull(),
+  stance: text().notNull().default("insufficient"),
+  confidence: real().notNull().default(0.5),
   createdAt: text("created_at").notNull(),
 }, (table) => [uniqueIndex("evidence_project_paper").on(table.projectId, table.paperId)]);
 
