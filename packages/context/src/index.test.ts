@@ -131,7 +131,7 @@ describe("projectContext", () => {
     });
     expect(result.trace.capsuleNodeIds).toEqual(["root"]);
     expect(result.trace.exactNodeIds).toEqual(expect.arrayContaining(["old", "recent", "quote"]));
-    expect(result.canvasText).toContain("显式引用原文");
+    expect(result.canvasText).toContain("显式引用 · 科研实体内容");
     expect(result.history).toHaveLength(0);
     expect(result.trace.omittedHistoryCount).toBe(1);
   });

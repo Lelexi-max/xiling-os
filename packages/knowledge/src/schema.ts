@@ -1,10 +1,11 @@
-import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const projects = sqliteTable("projects", {
   id: text().primaryKey(),
   name: text().notNull(),
   description: text().notNull(),
   researchQuestion: text("research_question").notNull(),
+  domainIds: text("domain_ids").notNull().default('["general-science"]'),
   status: text().notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
@@ -48,8 +49,12 @@ export const evidence = sqliteTable("evidence", {
   note: text().notNull(),
   stance: text().notNull().default("insufficient"),
   confidence: real().notNull().default(0.5),
+  sourceQuote: text("source_quote").notNull().default(""),
+  sourceLocator: text("source_locator"),
+  limitations: text().notNull().default(""),
+  claimRevisionId: text("claim_revision_id"),
   createdAt: text("created_at").notNull(),
-}, (table) => [uniqueIndex("evidence_project_paper").on(table.projectId, table.paperId)]);
+}, (table) => [index("evidence_project_paper").on(table.projectId, table.paperId)]);
 
 export const chatSessions = sqliteTable("chat_sessions", {
   id: text().primaryKey(),

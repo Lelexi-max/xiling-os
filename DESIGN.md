@@ -4,19 +4,19 @@
 >
 > - 状态：有效
 > - 最后核对：2026-08-27
-> - 对应版本：Gate 4.5 Agent 中枢与 Pi MCP Host 已接入；Research Graph RG-5 本地架构收口、文献证据闭环与旧 Canvas 退役已完成
+> - 对应版本：Gate 4.5 Agent 中枢、受控 Pi 多智能体编排与 Pi MCP Host 已接入；Research Graph RG-5 本地架构收口、文献证据闭环与旧 Canvas 退役已完成
 > - 代码事实源：`packages/contracts`、`packages/api-contracts` 与各模块的公开接口
 
 ## 1. 产品目标
 
-汐灵 OS 是面向个人物理海洋与气候研究者的本地优先 AI 科研工作台。它要把以下过程组织成一个可审批、可追踪、可恢复的研究闭环：
+汐灵 OS 是面向个人研究者的本地优先、领域可扩展 AI 科研工作台；首个深度领域是物理海洋与气候科学。它要把以下过程组织成一个可审批、可追踪、可恢复的研究闭环：
 
 ```text
 科研问题 → 文献证据 → 数据检索/切片 → 隔离计算 → 图表与报告
         → Reviewer 审查 → Artifact/溯源 → 项目、画布与 Wiki 沉淀
 ```
 
-首版围绕 Python 物理海洋与气候研究，不以通用办公 Agent、团队协作平台或云端多租户系统为目标。
+首版仍围绕 Python 物理海洋与气候研究交付完整闭环，但稳定内核不得依赖单一学科；新学科通过受审计领域包接入。汐灵不以通用办公 Agent、团队协作平台或云端多租户系统为目标。
 
 产品的五个主要工作面不是五套独立数据：
 
@@ -65,6 +65,7 @@ flowchart TB
     CONTEXT["context"]
     PI["pi-runtime"]
     HARNESS["agent-harness<br/>durable session/run/event"]
+    MULTIAGENT["multi-agent<br/>role/task/scheduler/handoff"]
     RGCORE["research-graph<br/>typed graph store"]
     KNOWLEDGE["knowledge ports / SQLite adapter"]
     LITCORE["literature providers / graph"]
@@ -83,6 +84,7 @@ flowchart TB
   WEBINFRA -->|"HTTP + SSE"| SERVER
   SERVER --> DOMAIN
   AGENT --> HARNESS
+  AGENT --> MULTIAGENT
   RESEARCHGRAPH --> RGCORE
   RGCORE --> LADYBUG["LadybugDB<br/>research-graph.lbdb"]
   AGENT --> MCPHOST
@@ -108,21 +110,21 @@ apps/
         ├── workspace/           # Project、事项、Chat 历史、Wiki
         ├── settings/            # 凭据状态、模型路由、自定义 Provider
         ├── mcp/                 # MCP 配置、密钥状态、连通性测试
-        ├── agent-center/        # 正式 command/snapshot/event/source API
-        └── legacy-gate3/        # 开发期待删除；不再承担兼容目标
+        └── agent-center/        # 正式 command/snapshot/event/source API
 packages/
 ├── contracts/                   # 领域 TypeScript 类型事实源
 ├── api-contracts/               # 前后端共享 Zod 运行时契约
 ├── context/                     # 投影、Capsule、组装、缓存与 token 估算
 ├── pi-runtime/                  # Pi SDK 适配、模型路由、Skill、MCP Host、TokenLedger
 ├── agent-harness/               # Pi 无关的耐久 Agent 运行中枢
+├── multi-agent/                 # Pi 无关的角色、TaskPacket、调度与 Handoff
+├── science-domains/             # 科学领域 Manifest、注册与项目级组合
 ├── research-graph/              # 科研实体、关系 Schema、LadybugDB 适配器
 ├── knowledge/                   # Knowledge ports、SQLite 适配与迁移
 ├── literature/                  # 文献 Provider、缓存和图算法
 ├── connectors/                  # 数据连接器契约、预检、审批状态机
 ├── credentials/                 # 加密凭据存储
-├── platform/                    # Windows/WSL 与路径适配
-└── research/                    # Gate 3 旧聚合；RG 重构中删除，不做数据迁移
+└── platform/                    # Windows/WSL 与路径适配
 services/runner/                 # Python 科学计算与容器执行
 scripts/                         # smoke、架构、合规和跨平台检查
 docs/adr/                        # 已接受或被替代的架构决策
@@ -146,10 +148,12 @@ docs/adr/                        # 已接受或被替代的架构决策
 | 对象 | 当前所有者 | 持久化 | 关键约束 |
 |---|---|---|---|
 | Project / ProjectItem | Knowledge | SQLite | 所有研究对象必须属于 Project |
+| ScienceDomainManifest | Science Domains | 代码清单 + 项目 domainIds | 通用科研内核始终启用；领域清单不自动获得执行权限 |
 | ChatSession 目录 | Knowledge | SQLite | 会话必须项目隔离 |
 | Agent Entry / Message | Agent Harness | Agent SQLite | Server 单写；Chat 与运行图按稳定 source ID 查询 |
 | WikiPage / Revision | Knowledge | SQLite + FTS5 | Revision 不可变；恢复产生新版本 |
-| Evidence 捕获记录 | Knowledge | SQLite + outbox | 不可变阅读标注、立场与置信度；投影为 Paper/SourceFragment/EvidenceAssertion |
+| Evidence 捕获记录 | Knowledge | SQLite + outbox | 每条证据保存原文摘录、定位、解释、局限、立场、置信度与目标 ClaimRevision；同一论文可支持多个断言 |
+| ResearchGraphProposal | Research Graph module | 独立 SQLite | Agent/用户的 Claim 新建或修订先落待审提案；接受后才生成不可变 ClaimRevision，拒绝不改科研事实 |
 | ContextCapsule | Context + Knowledge | SQLite 派生缓存 | 不是证据源；源变化后失效 |
 | Agent Execution Graph | Agent Harness | Agent SQLite | 当前链与项目全量运行图都是执行事实的查询投影 |
 | ResearchGraphEntity / Relation | Research Graph | LadybugDB | 类型化科研事实、单写事务、项目隔离、稳定内容哈希 |
@@ -162,6 +166,7 @@ docs/adr/                        # 已接受或被替代的架构决策
 | TokenLedger | Pi Runtime | JSONL | 用于观测，不作为正常任务硬限额 |
 | McpServerSettings | MCP Settings + Credentials | JSON + 加密凭据文件 | Server 配置不含密钥；完整工具目录留在隔离 Host |
 | AgentSession / Run / Operation / Entry / Usage / Compaction | Agent Harness | 独立 SQLite | Gate 4.5-D 已成为 Chat 与 Agent Execution Graph 主事实源 |
+| AgentDelegation / TaskResult | Multi-Agent + Agent Harness | Agent SQLite | 独立 child session；父子血缘、上下文哈希、预算和结果耐久化；禁止递归 |
 
 业务数据库不持久化任意操作系统绝对路径。跨平台资源使用 `project://`、`artifact://`、`dataset://` URI。
 
@@ -205,6 +210,7 @@ sequenceDiagram
 - Agent Store 保存 Run、Operation、Entry、Usage、Compaction 和事件游标；重连按序号重放。
 - 自动 Compaction 保留覆盖范围、来源哈希和 retained tail；原 Entry 不删除。
 - MCP 只在宿主元数据命中任务后增加一个固定代理工具；Server 与具体工具 schema 不进入 Agent 主上下文。
+- 多智能体委派工具同样按任务意图惰性激活；每个子任务只获得 ContextManifest 对应的科研图切片和角色 capability allowlist，不继承父会话全文。
 
 当前不变量：
 
@@ -212,11 +218,12 @@ sequenceDiagram
 - Durable Agent Session Store 是 Agent 历史真相源；Web 端只发命令、订阅事件和保存纯展示偏好。
 - Project/Wiki/Evidence、Research Graph、Layout 与 Artifact 由各自仓储拥有，Agent 只通过显式 projector 写入领域对象。
 - 科研画布只显示 Research Graph 的摘要与 URI，不复制 Agent 原文；需要旧对话时走压缩索引与耐久 Entry 回读。
-- `SourceContentResolver` 根据 source kind 在项目权限和读取上限内解析 Agent Entry、Paper/Evidence、Workflow、Artifact 或自由笔记；Context Pipeline 不猜测展示文本的来源。
+- `SourceContentResolver` 只在投影命中后按 source kind 解析 Agent Entry、Evidence 原文、Provider 摘要、Wiki Revision、Workflow 或受管 Artifact；每段上下文显式标记“原文/摘要/解释”，禁止把节点展示摘要伪装成来源原文。
 - Scientific Canvas、Agent Execution Graph 与 Pi Session Tree 不做 1:1 映射；移动和布局不改变科研事实或追加式执行事实。
 - Agent 生成的 Wiki 草稿必须携带 source/run/evidence 溯源，发布继续经过用户确认。
+- Research Director 负责最终综合；预置子 Agent 只完成独立检索、证据、数据、分析、复现或盲审任务，结果进入 Research Graph 前仍走 proposal/approval。
 
-详细机制见 [上下文经济架构](docs/architecture/context-budget.md)。MCP 已通过独立 Host 接入：无配置时不启动子进程，任务未命中时不激活代理工具，具体工具 schema 由 adapter 缓存并按 search/describe 获取。
+详细机制见 [上下文经济架构](docs/architecture/context-budget.md)和[多智能体科研编排](docs/architecture/multi-agent.md)。MCP 已通过独立 Host 接入：无配置时不启动子进程，任务未命中时不激活代理工具，具体工具 schema 由 adapter 缓存并按 search/describe 获取。
 
 ### 6.2 项目科研闭环
 
@@ -236,13 +243,13 @@ draft → probing → pending_approval → approved
 5. Reviewer 检查结果与限制，Runner 生成 Artifact 和 RO-Crate。
 6. Workflow SQLite 在状态事务中写 outbox；幂等 projector 将计划、审批、数据快照、Run、Artifact、Reviewer 与生命周期投影到 Research Graph，再标记 Workflow 已沉淀。
 
-Gate 3 路由只为旧数据和旧测试保留，不得成为新功能入口。
+旧 Gate 3 路由、聚合包与演示界面已经删除；正式科研闭环只经 Project Workflow、Research Graph 与 Artifact Viewer。
 
 ### 6.3 两种画布与三类图
 
 系统不再让一个 Canvas 同时承担 Agent 运行监控和科研事实存储：
 
-- **Agent Execution Graph** 属于 Chat。对话模式阅读当前 Session 的消息；图模式默认展示项目内全部 Session、Run、Operation、Tool 与 Entry，也可过滤当前 Session。节点与连线来自 Agent Store 的追加式事实，拖动只改变当前视图。RG-2 已用稳定 `agent-run://` 与 Artifact URI 在 Research Graph 建立来源引用，后续 UI 可跨图跳转。
+- **Agent Execution Graph** 属于 Chat。图模式默认展示当前 Session 的低密度对话投影：每轮只呈现研究指令与关键回答，Model、Tool、Tool Result、Usage 与 Compaction 折叠在回答节点的按需详情中；项目全景是次级切换。节点可按“沿节点继续”或“组合引用”进入同一 Composer，完整事实仍来自 Agent Store，拖动只改变当前视图。RG-2 已用稳定 `agent-run://` 与 Artifact URI 在 Research Graph 建立来源引用。
 - **Scientific Canvas** 是 Research Graph 的可视化投影。它支持项目总览以及 `literature`、`evidence`、`provenance`、`artifacts` 分项视图。
 - **Literature Discovery Graph** 只存在于文献工作台，用于搜索和推荐。临时论文不能因出现在搜索图中就成为项目证据。
 
@@ -342,7 +349,8 @@ Wiki 的目的不是独立笔记编辑器，而是项目的百科入口：用户
 - Server 持有唯一可写 Ladybug Database，写入通过单写队列和 ChangeSet 事务。
 - 关系端点必须存在于同一 Project；失败时整个 ChangeSet 回滚。
 - 已接受的 ClaimRevision、DatasetSnapshot、ArtifactVersion 和 WikiRevisionRef 不原地覆盖；新版本通过 `SUPERSEDES` 连接。
-- EvidenceAssertion 显式保存 `supports/refutes/qualifies/insufficient`、来源定位和置信度；不得把模型摘要当作 EvidenceAssertion 来源。
+- EvidenceAssertion 显式保存 `supports/refutes/qualifies/insufficient`、原文摘录、来源定位、解释、局限、置信度和目标 ClaimRevision；不得把模型摘要当作 EvidenceAssertion 来源。
+- Claim/ClaimRevision 写入必须经过 `ResearchGraphProposal` 的接受决策；修订生成新版本和 `SUPERSEDES`，不得原地覆写。
 - WAL、Checkpoint、非优雅退出恢复由离线 smoke 验证。备份必须先停写、Checkpoint、关闭，再复制数据库文件。
 
 ### 跨存储投影与 reconcile
@@ -364,6 +372,15 @@ Agent SQLite、Knowledge SQLite、Workflow SQLite、Scientific Canvas Layout SQL
 5. Web 通过共享客户端调用，不在视图复制协议。
 6. 增加最短成功路径、关键失败路径、重启/取消或并发测试。
 7. 若改变本文的不变量，先新增 ADR，再修改代码和本文。
+
+### 新增科学领域包
+
+1. 先复用 `general-science` 的证据、溯源、文献、Artifact、复现和审查对象，不复制科研内核。
+2. 在 `ScienceDomainManifest` 声明提示片段、能力元数据、角色、连接器、Artifact 类型和 schema namespace。
+3. 有副作用的工具必须在 Server 组合根显式注册 adapter，并沿用审批与 capability token；Manifest 不能携带任意执行代码。
+4. 领域依赖进入独立 Runner 环境，不进入 Agent 核心或 Node Server 常驻上下文。
+5. 未选择该领域的项目不得看到其工具、角色、Skill 正文或凭据。
+6. 按 [科学领域扩展架构](docs/architecture/science-domains.md) 提供离线 fixture、smoke、许可证和 Windows/WSL2 验证。
 
 ### 新增海洋数据连接器
 
@@ -417,7 +434,7 @@ pnpm compliance    # 依赖许可证检查
 | Canvas 展示文本被误当 Agent 原文 | 已迁移为 `sourceEntryId`/Artifact 引用，旧 `messageId` 只作迁移元数据 | 清理旧 Knowledge 消息表前做最终迁移审计 |
 | MCP Host 或外部 Server 失败 | 独立子进程、惰性连接、无配置不启动；主应用不加载 Extension | 多租户、远程部署或需要更强 OS 沙箱时迁入容器/独立服务 |
 | trusted MCP 权限过宽 | 默认 approval-required；trusted 必须由用户逐 Server 显式选择 | 引入细粒度读/写工具策略与可撤销项目 capability token |
-| Canvas 无完整 Patch 历史 | revision 防覆盖 | 开放 Agent 批量改图前实现预览/确认/撤销 |
+| 批量科研图变更尚无通用 Patch 历史 | Claim 新建/修订已有 proposal 接受/拒绝与不可变版本；布局用 revision 防覆盖 | 开放 Agent 批量实体/关系修改前扩展通用 ChangeSet 预览与撤销 |
 | LadybugDB 仍是较新的嵌入式图后端 | `ResearchGraphStore` 隔离、精确锁版本、事务/恢复 smoke；RG-2 已接主路径但仍受跨平台发布门禁约束 | 任一发布平台、WAL 恢复或 Node Native Addon 门禁失败即切换 Neo4j Community 适配器 |
 | Research Graph 与 Agent/Knowledge/Workflow 跨库一致性 | RG-2 已实现 durable outbox/journal、幂等 projector、目标 ledger 与 reconcile | 多实例 Server 前进一步引入 lease/queue，不做分布式事务 |
 | Windows 完整链路未在专机验收 | 保留 PowerShell/WSL smoke | Gate 5 发布前必须通过真实机器矩阵 |
@@ -459,6 +476,7 @@ pnpm compliance    # 依赖许可证检查
 - [ADR 0027：Research Graph durable projection](docs/adr/0027-durable-research-graph-projection.md)
 - [ADR 0028：科研画布布局与 Research Graph 局部上下文](docs/adr/0028-scientific-canvas-layout-and-context.md)
 - [ADR 0029：文献证据提升与旧 Canvas 完全退役](docs/adr/0029-literature-evidence-promotion-and-canvas-retirement.md)
+- [ADR 0031：Flowith 式低密度 Agent 对话画布](docs/adr/0031-flow-style-agent-conversation-canvas.md)
 - [ADR 0020：上下文风险加固](docs/adr/0020-context-risk-hardening.md)
 - [ADR 0021：模块化单体与版本化存储](docs/adr/0021-modular-monolith-and-versioned-storage.md)
 - [ADR 0022：研究 Agent Harness 与持久会话中枢](docs/adr/0022-research-agent-harness.md)
@@ -470,6 +488,8 @@ pnpm compliance    # 依赖许可证检查
 
 ## 17. 变更记录
 
+- **2026-08-27**：Agent 运行图改为 Flowith 式低密度对话画布：默认当前 Session，每轮只显示研究指令与关键回答，执行细节折叠；新增沿节点继续、组合引用、祖先路径聚焦、自由拖动、项目全景与画布内 Composer。
+- **2026-08-27**：完成科研真实性与人机功效纠偏：Claim/ClaimRevision 采用待审提案写入；Evidence 保存精确摘录、定位、局限并以 `ASSERTS` 指向具体主张版本；Context 新增按需 `SourceContentResolver`；项目运行改读正式 Workflow、Chat 改读真实 Artifact；科研画布增加一跳聚焦、关系筛选和来源跳转；删除旧 Gate 3 路由、Web 视图、聚合包和 Server 依赖。
 - **2026-08-27**：完成 RG-5 本地收口：旧 Canvas 类型化文档契约和测试一并撤下；Wiki、Chat、文献工作台与 Scientific Canvas 只经 Research Graph/Agent Store/Knowledge 窄边界协作；127 项测试、完整 smoke、生产构建与 4317/4318 浏览器验收通过。真实 Windows 11/WSL2、签名安装介质和真实科研试用继续作为发布门禁。
 - **2026-08-27**：完成 RG-4 本地主路径：文献 Provider 投影真实摘要；工作台增加发现/项目证据切换、原文阅读入口、标注、证据立场和置信度；一次提升经 Knowledge outbox 生成 Paper、SourceFragment、EvidenceAssertion 并连接 ResearchQuestion；删除旧 Canvas Web、HTTP、文件仓储和文献固定入口，Wiki 改读 Research Graph。
 - **2026-08-26**：完成 RG-3 本地主路径：顶层 Scientific Canvas 接入 Research Graph 五种投影、曲线关系、纵向自动整理、自由拖动、搜索、详情和图例；新增独立 SQLite Layout Store 与 revision；Chat context 从旧 Canvas 切换为显式科研实体、有限两跳邻域、Capsule 与 Artifact 引用。

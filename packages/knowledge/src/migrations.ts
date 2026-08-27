@@ -39,6 +39,44 @@ const migrations: Array<{ version: number; sql: string }> = [{
     ALTER TABLE evidence ADD COLUMN stance TEXT NOT NULL DEFAULT 'insufficient';
     ALTER TABLE evidence ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5;
   `,
+}, {
+  version: 4,
+  sql: `
+    CREATE TABLE evidence_v4 (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      paper_id TEXT NOT NULL,
+      paper_json TEXT NOT NULL,
+      note TEXT NOT NULL,
+      stance TEXT NOT NULL DEFAULT 'insufficient',
+      confidence REAL NOT NULL DEFAULT 0.5,
+      source_quote TEXT NOT NULL DEFAULT '',
+      source_locator TEXT,
+      limitations TEXT NOT NULL DEFAULT '',
+      claim_revision_id TEXT,
+      created_at TEXT NOT NULL
+    );
+    INSERT INTO evidence_v4 (id, project_id, paper_id, paper_json, note, stance, confidence, created_at)
+      SELECT id, project_id, paper_id, paper_json, note, stance, confidence, created_at FROM evidence;
+    DROP TABLE evidence;
+    ALTER TABLE evidence_v4 RENAME TO evidence;
+    CREATE INDEX evidence_project_paper ON evidence(project_id, paper_id);
+  `,
+}, {
+  version: 5,
+  sql: `
+    ALTER TABLE projects ADD COLUMN domain_ids TEXT NOT NULL DEFAULT '["general-science"]';
+    UPDATE projects SET domain_ids = '["general-science","ocean-climate"]' WHERE id = 'ocean-heatwave';
+  `,
+}, {
+  version: 6,
+  sql: `
+    -- Every project created before domain support belonged to the original
+    -- ocean-first product. New projects are created only after this migration
+    -- and therefore keep their explicit user selection.
+    UPDATE projects SET domain_ids = '["general-science","ocean-climate"]'
+      WHERE domain_ids = '["general-science"]';
+  `,
 }];
 
 export const KNOWLEDGE_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;

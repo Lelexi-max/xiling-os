@@ -13,8 +13,8 @@
 
 1. Web 顶层导航撤下旧 Agent Canvas。Chat 顶部提供“对话 / 运行图”切换。
 2. Agent Execution Graph 只通过 `GET /api/agent-center/graph` 查询，由 Server 从耐久 Agent Store 实时投影，不读取旧 Canvas JSON。
-3. 图支持 `project` 和 `session` 两个作用域。项目作用域显示项目内全部 Session 和受界限的近期 Run；当前对话作用域只显示选中 Session。
-4. 节点语义为 Project、Session、Run、Model Operation、Tool Operation、Message/Tool Result Entry 和 Compaction；关系为 contains、started、continued、invoked、returned、produced、compacted。
+3. API 支持 `project` 和 `session` 两个作用域，并保留完整的有界执行事实；Web 默认使用 `session`，项目全景是次级切换。
+4. API 节点语义仍为 Project、Session、Run、Model Operation、Tool Operation、Message/Tool Result Entry 和 Compaction；Web 的默认可视投影已由 [ADR 0031](0031-flow-style-agent-conversation-canvas.md) 收敛为 Thread、Prompt 与 Response。
 5. Tool-call Entry 与 Tool Operation 表达同一调用时，投影只显示 Operation；Tool-result Entry 保留并通过 `returned` 连接，避免重复节点。
 6. API 不返回原始模型请求、工具参数、工具完整结果或事件 payload，只返回短摘要、稳定 source ID、状态、时间和用量指标。默认限制 24 Session、80 Run、160 Operation 和 160 可见 Entry，并明确返回 `truncated`。
 7. 图节点可自由拖动、自动纵向整理、缩放和平移，但位置只属于当前浏览器视图，不写回 Agent Store。拖动绝不改写执行关系。
@@ -24,7 +24,7 @@
 ## 后果
 
 - Agent 执行只有一个事实源，重启后仍可重建相同语义图。
-- Chat 与运行图从两个维度观察同一个 Harness：前者适合阅读当前交互，后者适合检查项目级运行、工具和恢复状态。
+- Chat 与运行图从两个维度观察同一个 Harness：前者适合线性阅读，后者适合导航、继续或组合引用对话节点；底层执行诊断仍可按需打开。
 - RG-4 已按 [ADR 0029](0029-literature-evidence-promotion-and-canvas-retirement.md) 删除旧 `CanvasView`、Canvas HTTP 模块与文件仓储。
 - Context Assembler 已在 RG-3 切换为 Research Graph 当前实体、有限邻域与显式引用；Agent Execution Graph 本身不参与模型上下文组装。
 

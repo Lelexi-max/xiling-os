@@ -23,6 +23,9 @@ erDiagram
   AGENT_SESSION ||--o{ TOKEN_LEDGER : accounts
   AGENT_SESSION ||--o{ AGENT_ENTRY : records
   AGENT_ENTRY }o--o{ ARTIFACT_VERSION : references
+  AGENT_SESSION ||--o{ AGENT_DELEGATION : originates
+  AGENT_DELEGATION }o--|| AGENT_SESSION : isolates_child
+  AGENT_DELEGATION ||--o| AGENT_RUN : executes
 ```
 
 ## 稳定公共类型
@@ -74,6 +77,7 @@ export interface ContextCapsule {
 - 所有对象属于一个 `Project`；跨项目引用必须显式复制或建立只读引用。
 - Chat、科研画布、Wiki 和项目管理不复制 Artifact，只引用同一 `artifact://` URI。
 - Agent Session 是追加式执行事实；Chat 内 Agent Execution Graph 是它的查询投影。Scientific Canvas 是 Research Graph 的查询投影，两种图不能互相冒充事实源。
+- 多智能体协作以 `AgentDelegation` 作为耐久编排事实：父 Run、子 Session、子 Run、角色、Context Manifest 哈希、预算、状态与结构化结果必须可追踪。子智能体拥有独立 Session，不能把父对话全文复制为自身上下文，也不能递归委派。
 - Scientific Canvas 节点坐标、视口和折叠状态只属于 Layout Store；Research Graph 保存科研实体和类型化关系，不保存布局。
 - Wiki 摘要和画布展示文本不是 Agent 原始消息或科研证据；完整来源必须经 `SourceContentResolver` 按 entry/domain URI 获取。
 - `Run` 一旦完成，输入、代码、环境和输出 manifest 不可原地修改；重跑产生新 Run。

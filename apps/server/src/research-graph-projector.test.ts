@@ -45,7 +45,7 @@ function completedWorkflow(projectId: string): ProjectResearchWorkflow {
 
 describe("Research Graph projection chain", () => {
   it("maps a completed workflow to plan, data, run, artifacts, reviewer and Agent provenance", () => {
-    const project = { id: "p", name: "海洋项目", description: "fixture", researchQuestion: "层结是否变化？", status: "active" as const, createdAt: "2026-08-26T00:00:00.000Z", updatedAt: "2026-08-26T00:00:00.000Z" };
+    const project = { id: "p", name: "海洋项目", description: "fixture", researchQuestion: "层结是否变化？", domainIds: ["ocean-climate"], status: "active" as const, createdAt: "2026-08-26T00:00:00.000Z", updatedAt: "2026-08-26T00:00:00.000Z" };
     const workflow = completedWorkflow(project.id);
     const changeSet = workflowRecordToChangeSet({ id: "event", projectionKey: "workflow:event", projectId: project.id, sourceId: workflow.id, eventType: "workflow.snapshot.updated", workflow, createdAt: workflow.updatedAt }, project);
     expect(changeSet.nodes.map((node) => node.kind)).toEqual(expect.arrayContaining(["Project", "ResearchQuestion", "ResearchPlan", "Dataset", "DatasetSnapshot", "Approval", "Actor", "ResearchRun", "Artifact", "ArtifactVersion", "ReviewReport", "LifecycleEvent"]));
@@ -64,7 +64,7 @@ describe("Research Graph projection chain", () => {
     const workflows = new SqliteProjectWorkflowRepository(join(root, "workflows.sqlite"));
     const agents = new SqliteAgentSessionStore(join(root, "agent.sqlite"));
     const graph = new LadybugResearchGraphStore(join(root, "research-graph.lbdb"));
-    const project = knowledge.createProject({ name: "重放项目", description: "crash fixture", researchQuestion: "重复投影是否幂等？" });
+    const project = knowledge.createProject({ name: "重放项目", description: "crash fixture", researchQuestion: "重复投影是否幂等？", domainIds: ["general-science"] });
     const event = knowledge.listProjectionOutbox().find((candidate) => candidate.projectId === project.id)!;
 
     await graph.applyProjection({ projectionKey: event.projectionKey, source: "knowledge", sourceId: event.sourceId, changeSet: knowledgeRecordToChangeSet(event, project) });

@@ -75,9 +75,14 @@ export function projectAgentExecutionGraph(store: SqliteAgentSessionStore, optio
   const maxRuns = options.maxRuns ?? 80;
   const maxOperations = options.maxOperations ?? 160;
   const maxEntries = options.maxEntries ?? 160;
-  const candidates = options.scope === "session"
+  const projectDelegations = store.listProjectDelegations(options.projectId);
+  const baseCandidates = options.scope === "session"
     ? (options.sessionId ? [store.getSession(options.sessionId)].filter((item): item is AgentSessionRecord => Boolean(item && item.projectId === options.projectId)) : [])
     : store.listProjectSessions(options.projectId);
+  const baseRunIds = new Set(baseCandidates.flatMap((session) => store.listSessionRuns(session.id).map((run) => run.id)));
+  const childSessionIds = new Set(projectDelegations.filter((item) => baseRunIds.has(item.parentRunId) || baseRunIds.has(item.rootRunId)).map((item) => item.childSessionId));
+  const candidates = [...baseCandidates, ...[...childSessionIds].map((id) => store.getSession(id)).filter((item): item is AgentSessionRecord => Boolean(item))]
+    .filter((session, index, all) => all.findIndex((candidate) => candidate.id === session.id) === index);
   const sessions = candidates.slice(0, maxSessions);
   const allRuns = sessions.flatMap((session) => store.listSessionRuns(session.id).map((run) => ({ session, run })))
     .sort((left, right) => Date.parse(right.run.startedAt) - Date.parse(left.run.startedAt));
@@ -159,6 +164,29 @@ export function projectAgentExecutionGraph(store: SqliteAgentSessionStore, optio
     }
   }
 
+  const selectedRunIds = new Set(selectedRuns.map(({ run }) => run.id));
+  const visibleDelegations = projectDelegations.filter((item) => selectedRunIds.has(item.parentRunId) && (!item.childRunId || selectedRunIds.has(item.childRunId)));
+  for (const delegation of visibleDelegations) {
+    const delegationGraphId = nodeId("delegation", delegation.id);
+    nodes.push({
+      id: delegationGraphId,
+      projectId: options.projectId,
+      kind: "delegation",
+      title: delegation.roleId,
+      summary: compactText(delegation.objective),
+      status: delegation.status,
+      timestamp: delegation.createdAt,
+      source: { runId: delegation.parentRunId, delegationId: delegation.id },
+      parentRunId: delegation.parentRunId,
+      childRunId: delegation.childRunId,
+      childSessionId: delegation.childSessionId,
+      roleId: delegation.roleId,
+      isolation: delegation.isolation,
+    });
+    edges.push(edge("delegated", nodeId("run", delegation.parentRunId), delegationGraphId, "委派"));
+    if (delegation.childRunId) edges.push(edge("started", delegationGraphId, nodeId("run", delegation.childRunId), "子任务"));
+  }
+
   return {
     projectId: options.projectId,
     scope: options.scope,
@@ -167,6 +195,6 @@ export function projectAgentExecutionGraph(store: SqliteAgentSessionStore, optio
     edges,
     generatedAt: new Date().toISOString(),
     truncated: candidates.length > sessions.length || allRuns.length > selectedRuns.length || operationTruncated || entryTruncated,
-    counts: { sessions: renderedSessions.length, runs: selectedRuns.length, operations: operationCount, entries: entryCount },
+    counts: { sessions: renderedSessions.length, runs: selectedRuns.length, ...(visibleDelegations.length ? { delegations: visibleDelegations.length } : {}), operations: operationCount, entries: entryCount },
   };
 }

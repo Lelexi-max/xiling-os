@@ -14,14 +14,17 @@ export interface WorkspaceRouteDependencies {
   agentMigrationReady?: Promise<unknown>;
   onChatSessionCreated?(session: { id: string; projectId: string }): AgentSessionRecord;
   onChatSessionArchived?(session: { id: string; projectId: string }): AgentSessionRecord | undefined;
+  validateDomainIds?(domainIds: string[]): string[];
   validateResearchContext(projectId: string, context: { activeNodeId: string; quotedNodeIds: string[] }): Promise<unknown>;
 }
 
-export function registerWorkspaceRoutes(app: FastifyInstance, { knowledge, agentSessions, agentMigrationReady, onChatSessionCreated, onChatSessionArchived, validateResearchContext }: WorkspaceRouteDependencies): void {
+export function registerWorkspaceRoutes(app: FastifyInstance, { knowledge, agentSessions, agentMigrationReady, onChatSessionCreated, onChatSessionArchived, validateDomainIds, validateResearchContext }: WorkspaceRouteDependencies): void {
   app.get("/api/gate4/projects", async () => knowledge.listProjects());
   app.post("/api/gate4/projects", async (request, reply) => {
     const parsed = projectCreateSchema.safeParse(request.body);
-    return parsed.success ? reply.code(201).send(knowledge.createProject(parsed.data)) : reply.code(400).send({ error: parsed.error.issues });
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+    try { return reply.code(201).send(knowledge.createProject({ ...parsed.data, domainIds: validateDomainIds?.(parsed.data.domainIds) ?? parsed.data.domainIds })); }
+    catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "Invalid science domain" }); }
   });
   app.patch("/api/gate4/projects/:id", async (request, reply) => {
     const params = idParamsSchema.safeParse(request.params); const body = projectUpdateSchema.safeParse(request.body);
@@ -31,6 +34,10 @@ export function registerWorkspaceRoutes(app: FastifyInstance, { knowledge, agent
     if (body.data.name !== undefined) patch.name = body.data.name;
     if (body.data.description !== undefined) patch.description = body.data.description;
     if (body.data.researchQuestion !== undefined) patch.researchQuestion = body.data.researchQuestion;
+    if (body.data.domainIds !== undefined) {
+      try { patch.domainIds = validateDomainIds?.(body.data.domainIds) ?? body.data.domainIds; }
+      catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "Invalid science domain" }); }
+    }
     if (body.data.status !== undefined) patch.status = body.data.status;
     return knowledge.updateProject(params.data.id, patch) ?? reply.code(404).send({ error: "Project not found" });
   });

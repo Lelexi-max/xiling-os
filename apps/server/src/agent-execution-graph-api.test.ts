@@ -29,6 +29,10 @@ describe("Agent Execution Graph API", () => {
       expect(sessionGraph.statusCode).toBe(200);
       expect(sessionGraph.json()).toMatchObject({ scope: "session", sessionId });
       expect((await app.inject({ method: "GET", url: `/api/agent-center/graph?projectId=other-project&scope=session&sessionId=${sessionId}` })).statusCode).toBe(404);
+      const roles = await app.inject({ method: "GET", url: "/api/agent-center/roles" });
+      expect(roles.statusCode).toBe(200);
+      expect(roles.json().roles).toEqual(expect.arrayContaining([expect.objectContaining({ id: "literature-scout", defaultIsolation: "scoped" }), expect.objectContaining({ id: "skeptical-reviewer", defaultIsolation: "blind" })]));
+      expect(JSON.stringify(roles.json())).not.toContain("systemPrompt");
     } finally { await app.close(); }
   });
 });

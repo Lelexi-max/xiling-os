@@ -101,6 +101,26 @@ export interface ResearchGraphProjection {
   generatedAt: string;
 }
 
+export type ResearchGraphProposalStatus = "pending" | "accepted" | "rejected";
+
+export type ResearchGraphProposalAction =
+  | { type: "create_claim"; title: string; summary: string }
+  | { type: "revise_claim"; claimId: string; title: string; summary: string };
+
+/**
+ * A user-reviewable scientific change. Agent and UI authors write proposals;
+ * only an explicit decision may mutate the Research Graph.
+ */
+export interface ResearchGraphProposal {
+  id: string;
+  projectId: string;
+  action: ResearchGraphProposalAction;
+  status: ResearchGraphProposalStatus;
+  createdAt: string;
+  decidedAt?: string;
+  appliedEntityIds: string[];
+}
+
 /**
  * Presentation-only state for the Scientific Canvas. Coordinates and viewport
  * are intentionally stored outside the Research Graph so moving a node can
@@ -133,9 +153,9 @@ export interface ScientificCanvasLayout {
  * Agent worked, not whether a scientific claim is true.
  */
 export type AgentExecutionGraphScope = "session" | "project";
-export type AgentExecutionNodeKind = "project" | "session" | "run" | "model" | "tool" | "message" | "compaction";
+export type AgentExecutionNodeKind = "project" | "session" | "run" | "delegation" | "model" | "tool" | "message" | "compaction";
 export type AgentExecutionNodeStatus = "active" | "archived" | "queued" | "running" | "completed" | "failed" | "cancelled" | "suspended";
-export type AgentExecutionEdgeKind = "contains" | "started" | "continued" | "invoked" | "returned" | "produced" | "compacted";
+export type AgentExecutionEdgeKind = "contains" | "started" | "continued" | "delegated" | "invoked" | "returned" | "produced" | "compacted";
 
 export interface AgentExecutionNode extends Record<string, unknown> {
   id: string;
@@ -148,6 +168,7 @@ export interface AgentExecutionNode extends Record<string, unknown> {
   source: {
     sessionId?: string;
     runId?: string;
+    delegationId?: string;
     operationId?: string;
     entryId?: string;
   };
@@ -177,6 +198,7 @@ export interface AgentExecutionGraphProjection {
   counts: {
     sessions: number;
     runs: number;
+    delegations?: number;
     operations: number;
     entries: number;
   };
@@ -593,6 +615,8 @@ export interface Gate4Project {
   name: string;
   description: string;
   researchQuestion: string;
+  /** Installed science-domain packages composed for this project. */
+  domainIds: string[];
   status: ProjectStatus;
   createdAt: string;
   updatedAt: string;
@@ -679,6 +703,10 @@ export interface EvidenceRecord {
   note: string;
   stance: EvidenceStance;
   confidence: number;
+  sourceQuote: string;
+  sourceLocator?: string;
+  limitations: string;
+  claimRevisionId?: string;
   createdAt: string;
 }
 

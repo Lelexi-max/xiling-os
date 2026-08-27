@@ -3,24 +3,28 @@ import type { CredentialProviderId, CredentialProviderStatus, InstalledSkillSumm
 import { ApiError, apiJson, jsonInit } from "../lib/api-client.js";
 import { McpSettingsPanel } from "./McpSettingsPanel.js";
 
-type SettingsSection = "overview" | "model" | "skills" | "mcp" | "model-apis" | "literature" | "data" | "security";
+type SettingsSection = "overview" | "model" | "agents" | "domains" | "skills" | "mcp" | "model-apis" | "literature" | "data" | "security";
 type ProviderCategory = CredentialProviderStatus["category"];
+type InstalledAgentRole = { id: string; title: string; description: string; allowedCapabilities: string[]; defaultIsolation: "scoped" | "blind" | "execution"; dynamic?: boolean };
+type InstalledScienceDomain = { id: string; version: string; title: string; description: string; disciplines: string[]; capabilities: Array<{ id: string }>; agentRoles: Array<{ id: string }>; connectorKinds: string[]; artifactKinds: string[]; schemaNamespaces: string[] };
 
 const sections: Array<{ label: string; items: Array<{ id: SettingsSection; label: string; icon: string }> }> = [
   { label: "常规", items: [{ id: "overview", label: "设置概览", icon: "⌂" }] },
-  { label: "智能体", items: [{ id: "model", label: "模型与推理", icon: "◈" }, { id: "skills", label: "Skills", icon: "✦" }, { id: "mcp", label: "MCP", icon: "⌘" }] },
-  { label: "服务连接", items: [{ id: "model-apis", label: "模型 API", icon: "⌁" }, { id: "literature", label: "文献服务", icon: "⌕" }, { id: "data", label: "海洋数据账户", icon: "≈" }] },
+  { label: "智能体", items: [{ id: "model", label: "模型与推理", icon: "◈" }, { id: "agents", label: "多智能体", icon: "⑂" }, { id: "domains", label: "科学领域", icon: "◉" }, { id: "skills", label: "Skills", icon: "✦" }, { id: "mcp", label: "MCP", icon: "⌘" }] },
+  { label: "服务连接", items: [{ id: "model-apis", label: "模型 API", icon: "⌁" }, { id: "literature", label: "文献服务", icon: "⌕" }, { id: "data", label: "科研数据账户", icon: "≈" }] },
   { label: "系统", items: [{ id: "security", label: "安全与运行", icon: "◇" }] },
 ];
 
 const sectionCopy: Record<SettingsSection, { eyebrow: string; title: string; description: string }> = {
   overview: { eyebrow: "SETTINGS", title: "设置概览", description: "集中查看智能体、服务连接和本地安全状态。" },
   model: { eyebrow: "AGENT · MODEL ROUTER", title: "模型与推理", description: "选择 Chat 默认模型；模型 ID 可自由输入，原生模态按具体模型声明。" },
+  agents: { eyebrow: "AGENT · RESEARCH TEAM", title: "多智能体", description: "查看预置科研角色、上下文隔离和能力边界；主智能体只在任务值得拆分时按需委派。" },
+  domains: { eyebrow: "EXTENSIONS · SCIENCE DOMAINS", title: "科学领域", description: "通用科研内核保持稳定，领域包按项目贡献提示、能力、角色、连接器与 Artifact 类型。" },
   skills: { eyebrow: "AGENT · LAZY CAPABILITIES", title: "已安装 Skills", description: "查看宿主目录中已注册的研究能力，以及它们何时加载、关联哪些工具。" },
   mcp: { eyebrow: "AGENT · MCP GATEWAY", title: "MCP 连接", description: "配置独立 MCP Host；服务器和工具 schema 按任务命中后惰性发现，不常驻 Agent 上下文。" },
   "model-apis": { eyebrow: "CONNECTIONS · MODEL", title: "模型 API", description: "管理模型提供商和自定义兼容 API；保存后可执行最短文字连通测试。" },
   literature: { eyebrow: "CONNECTIONS · LITERATURE", title: "文献服务", description: "配置文献图的主数据源与降级数据源。" },
-  data: { eyebrow: "CONNECTIONS · OCEAN DATA", title: "海洋数据账户", description: "配置正式数据下载所需账户；凭据只注入已批准的单次运行。" },
+  data: { eyebrow: "CONNECTIONS · RESEARCH DATA", title: "科研数据账户", description: "配置已安装领域包的数据账户；凭据只注入已批准的单次运行。" },
   security: { eyebrow: "SYSTEM · LOCAL FIRST", title: "安全与运行", description: "查看加密、凭据隔离、当前模型路由和上下文加载边界。" },
 };
 
@@ -49,16 +53,20 @@ export function SettingsView() {
   const [skills, setSkills] = useState<InstalledSkillsResponse>();
   const [mcp, setMcp] = useState<McpSettingsResponse>();
   const [skillQuery, setSkillQuery] = useState("");
+  const [agentRoles, setAgentRoles] = useState<InstalledAgentRole[]>([]);
+  const [scienceDomains, setScienceDomains] = useState<InstalledScienceDomain[]>([]);
 
   const refresh = async () => {
     try {
-      const [nextProviders, models, nextSkills, nextMcp] = await Promise.all([
+      const [nextProviders, models, nextSkills, nextMcp, nextAgentRoles, nextDomains] = await Promise.all([
         apiJson<CredentialProviderStatus[]>("/api/settings/providers"),
         apiJson<{ catalog: ModelCatalogEntry[]; runtime: ModelRuntimeStatus }>("/api/settings/models"),
         apiJson<InstalledSkillsResponse>("/api/settings/skills"),
         apiJson<McpSettingsResponse>("/api/settings/mcp"),
+        apiJson<{ roles: InstalledAgentRole[] }>("/api/agent-center/roles"),
+        apiJson<{ domains: InstalledScienceDomain[] }>("/api/science/domains"),
       ]);
-      setProviders(nextProviders); setCatalog(models.catalog); setRuntime(models.runtime); setReasoning(models.runtime.reasoning); setSkills(nextSkills); setMcp(nextMcp);
+      setProviders(nextProviders); setCatalog(models.catalog); setRuntime(models.runtime); setReasoning(models.runtime.reasoning); setSkills(nextSkills); setMcp(nextMcp); setAgentRoles(nextAgentRoles.roles); setScienceDomains(nextDomains.domains);
       if (models.runtime.providerId && models.runtime.modelId) { setModelProvider(models.runtime.providerId); setModelId(models.runtime.modelId); setModelImageInput(Boolean(models.runtime.selectedModel?.inputModalities.includes("image"))); }
     } catch (error) { setMessage(error instanceof Error ? `设置加载失败：${error.message}` : "设置加载失败。"); }
   };
@@ -155,11 +163,20 @@ export function SettingsView() {
     <p className="skills-footnote">Skill 的安装和版本目前由仓库 skills/catalog.json 管理；此页面不读取或展示 SKILL.md 正文，避免仅因打开设置就污染 Agent 上下文。</p>
   </section>;
 
+  const renderAgents = () => <section className="agent-role-settings">
+    <div className="skills-policy"><div><span>⑂</span><div><b>受控单层委派</b><p>Research Director 负责最终综合。子智能体使用独立 Session、最小科研图切片和角色能力白名单，不能继续创建子智能体。</p></div></div><dl><div><dt>{agentRoles.length}</dt><dd>预置角色</dd></div><div><dt>3</dt><dd>最大并发</dd></div><div><dt>0</dt><dd>递归层级</dd></div></dl></div>
+    <div className="agent-role-grid">{agentRoles.map((role) => <article key={role.id}><header><span>{role.title.slice(0, 1)}</span><div><h3>{role.title}</h3><code>{role.id}</code></div><b>{role.defaultIsolation === "blind" ? "盲审隔离" : role.defaultIsolation === "execution" ? "执行隔离" : "任务切片"}</b></header><p>{role.description}</p><section><small>允许能力</small><div>{role.allowedCapabilities.map((capability) => <span key={capability}>{capability}</span>)}</div></section><footer><i />按任务命中 · 独立上下文 · 不直接写科研事实</footer></article>)}</div>
+  </section>;
+
+  const renderDomains = () => <section className="agent-role-settings"><div className="skills-policy"><div><span>◉</span><div><b>通用内核 + 领域包</b><p>领域包只声明贡献；工具适配器必须由 Server 显式注册，执行、下载和科研事实写入仍走原有审批。</p></div></div><dl><div><dt>{scienceDomains.length}</dt><dd>已安装</dd></div><div><dt>{scienceDomains.reduce((sum, domain) => sum + domain.capabilities.length, 0)}</dt><dd>领域能力</dd></div><div><dt>{scienceDomains.reduce((sum, domain) => sum + domain.agentRoles.length, 0)}</dt><dd>角色贡献</dd></div></dl></div><div className="agent-role-grid">{scienceDomains.map((domain) => <article key={domain.id}><header><span>{domain.title.slice(0, 1)}</span><div><h3>{domain.title}</h3><code>{domain.id} · v{domain.version}</code></div><b>{domain.id === "general-science" ? "基础内核" : "领域扩展"}</b></header><p>{domain.description}</p><section><small>学科与 Schema</small><div>{[...domain.disciplines, ...domain.schemaNamespaces].map((item) => <span key={item}>{item}</span>)}</div></section><footer><i />{domain.connectorKinds.length} 类连接器 · {domain.artifactKinds.length} 类 Artifact</footer></article>)}</div></section>;
+
   const renderOverview = () => <div className="settings-overview">
     <section className="settings-health-strip"><div><i className={runtime?.mode === "live" && runtime.ready ? "ok" : ""} /><span><b>{runtime?.mode === "live" ? runtime.ready ? "智能体可用" : "模型路由待处理" : "离线模式"}</b><small>{runtime?.mode === "live" ? runtime.selectedModel?.name ?? runtime.modelId : "不会产生模型费用"}</small></span></div><div><i className="ok" /><span><b>本地安全边界</b><small>凭据值不会回传浏览器</small></span></div></section>
     <div className="settings-overview-grid">
       <button onClick={() => setSection("model")}><span>◈</span><div><small>智能体</small><h3>模型与推理</h3><p>{runtime?.mode === "live" ? `当前使用 ${runtime.selectedModel?.name ?? runtime.modelId}` : "当前使用离线 Pi 流"}</p></div><b>›</b></button>
       <button onClick={() => setSection("skills")}><span>✦</span><div><small>智能体</small><h3>{skills?.skills.length ?? 0} 个 Skills</h3><p>元数据常驻，正文按任务命中加载</p></div><b>›</b></button>
+      <button onClick={() => setSection("agents")}><span>⑂</span><div><small>智能体</small><h3>{agentRoles.length} 个科研角色</h3><p>独立 Session · 受控并发 · 禁止递归</p></div><b>›</b></button>
+      <button onClick={() => setSection("domains")}><span>◉</span><div><small>扩展</small><h3>{scienceDomains.length} 个科学领域</h3><p>通用内核 · 按项目组合领域能力</p></div><b>›</b></button>
       <button onClick={() => setSection("mcp")}><span>⌘</span><div><small>智能体</small><h3>{mcp?.servers.length ?? 0} 个 MCP 服务器</h3><p>单代理 schema · 惰性连接 · 独立进程</p></div><b>›</b></button>
       <button onClick={() => setSection("model-apis")}><span>⌁</span><div><small>服务连接</small><h3>{configuredCount}/{providers.length} 已配置</h3><p>模型、文献与数据服务相互隔离</p></div><b>›</b></button>
       <button onClick={() => setSection("security")}><span>◇</span><div><small>系统</small><h3>凭据与执行安全</h3><p>AES-256-GCM · 本地用户权限 · 容器执行</p></div><b>›</b></button>
@@ -173,7 +190,7 @@ export function SettingsView() {
   return <div className="settings-view settings-shell">
     <aside className="settings-local-nav"><div><small>SETTINGS</small><strong>汐灵设置</strong></div>{sections.map((group) => <section key={group.label}><span>{group.label}</span>{group.items.map((item) => <button className={section === item.id ? "active" : ""} key={item.id} onClick={() => { setSection(item.id); setMessage(""); }}><i>{item.icon}</i>{item.label}</button>)}</section>)}</aside>
     <main className="settings-content"><header className="settings-head"><div><small>{copy.eyebrow}</small><h1>{copy.title}</h1><p>{copy.description}</p></div>{section === "overview" ? <span>{configuredCount}/{providers.length} 已配置</span> : section === "skills" ? <span>{skills?.skills.length ?? 0} 已安装</span> : null}</header>{message ? <div className="settings-message" role="status">{message}</div> : null}
-      {section === "overview" ? renderOverview() : section === "model" ? renderModel() : section === "skills" ? renderSkills() : section === "mcp" ? <McpSettingsPanel value={mcp} onChanged={setMcp} onMessage={setMessage} /> : section === "model-apis" ? renderProviderCategory("model") : section === "literature" ? renderProviderCategory("literature") : section === "data" ? renderProviderCategory("data") : renderSecurity()}
+      {section === "overview" ? renderOverview() : section === "model" ? renderModel() : section === "agents" ? renderAgents() : section === "domains" ? renderDomains() : section === "skills" ? renderSkills() : section === "mcp" ? <McpSettingsPanel value={mcp} onChanged={setMcp} onMessage={setMessage} /> : section === "model-apis" ? renderProviderCategory("model") : section === "literature" ? renderProviderCategory("literature") : section === "data" ? renderProviderCategory("data") : renderSecurity()}
     </main>
   </div>;
 }

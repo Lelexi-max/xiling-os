@@ -3,7 +3,7 @@ import { literatureQuerySchema, paperParamsSchema, paperSchema, projectIdQuerySc
 import type { EvidenceStore } from "@xiling/knowledge";
 import { buildLiteratureGraph, createOceanHeatwaveFixture, type LiteratureSearchService } from "@xiling/literature";
 
-export function registerLiteratureRoutes(app: FastifyInstance, dependencies: { literature: LiteratureSearchService; credentialsReady: Promise<unknown>; evidence: EvidenceStore }): void {
+export function registerLiteratureRoutes(app: FastifyInstance, dependencies: { literature: LiteratureSearchService; credentialsReady: Promise<unknown>; evidence: EvidenceStore; validateClaimRevision(projectId: string, entityId: string): Promise<boolean> }): void {
   app.get("/api/gate4/literature/demo", async () => { const fixture = createOceanHeatwaveFixture(); return buildLiteratureGraph(fixture.papers, fixture.seedIds, { fetchedAt: "2026-08-23T00:00:00.000Z" }); });
   app.get("/api/gate4/literature/search", async (request, reply) => {
     const parsed = literatureQuerySchema.safeParse(request.query);
@@ -15,7 +15,22 @@ export function registerLiteratureRoutes(app: FastifyInstance, dependencies: { l
   app.get("/api/gate4/evidence", async (request, reply) => { const parsed = projectIdQuerySchema.safeParse(request.query); return parsed.success ? dependencies.evidence.listEvidence(parsed.data.projectId) : reply.code(400).send({ error: parsed.error.issues }); });
   app.post("/api/gate4/evidence", async (request, reply) => {
     const scoped = scopedPaperSchema.safeParse(request.body);
-    if (scoped.success) return reply.code(201).send(dependencies.evidence.saveEvidence(scoped.data.projectId, toPaperRecord(scoped.data.paper), scoped.data.note, scoped.data.stance, scoped.data.confidence));
+    if (scoped.success) {
+      if (scoped.data.claimRevisionId && !await dependencies.validateClaimRevision(scoped.data.projectId, scoped.data.claimRevisionId)) return reply.code(400).send({ error: "Evidence target must be an existing ClaimRevision in this project" });
+      return reply.code(201).send(dependencies.evidence.saveEvidence(
+      scoped.data.projectId,
+      toPaperRecord(scoped.data.paper),
+      scoped.data.note,
+      scoped.data.stance,
+      scoped.data.confidence,
+      {
+        sourceQuote: scoped.data.sourceQuote,
+        limitations: scoped.data.limitations,
+        ...(scoped.data.sourceLocator ? { sourceLocator: scoped.data.sourceLocator } : {}),
+        ...(scoped.data.claimRevisionId ? { claimRevisionId: scoped.data.claimRevisionId } : {}),
+      },
+      ));
+    }
     const legacy = paperSchema.safeParse(request.body);
     return legacy.success ? reply.code(201).send(dependencies.evidence.saveEvidence("ocean-heatwave", toPaperRecord(legacy.data))) : reply.code(400).send({ error: scoped.error.issues });
   });

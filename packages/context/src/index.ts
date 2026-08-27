@@ -234,6 +234,8 @@ export interface ContextNodeContent {
   id: string;
   title: string;
   body: string;
+  sourceLabel?: string;
+  sourceLocator?: string;
 }
 
 export interface ContextHistoryMessage {
@@ -298,7 +300,8 @@ export function assembleContext(input: ContextAssemblyInput): ContextAssemblyRes
   for (const id of [...activeIds.filter((candidate) => exactIds.has(candidate)), ...quoteIds]) {
     const node = input.nodes.get(id);
     if (!node) continue;
-    lines.push(`[${quoteIds.includes(id) ? "显式引用原文" : "活动科研实体原文"} · ${id}] ${node.title}：${normalizeText(node.body)}`);
+    const label = node.sourceLabel ?? "科研实体内容";
+    lines.push(`[${quoteIds.includes(id) ? `显式引用 · ${label}` : label} · ${id}] ${node.title}：${normalizeText(node.body)}${node.sourceLocator ? `\n  来源：${node.sourceLocator}` : ""}`);
   }
 
   const canvasText = lines.map((line) => `- ${line}`).join("\n");

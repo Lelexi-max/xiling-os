@@ -12,10 +12,11 @@ const allowedInternalDependencies = new Map([
   ["credentials", new Set(["contracts"])],
   ["knowledge", new Set(["contracts"])],
   ["literature", new Set(["contracts"])],
+  ["multi-agent", new Set(["contracts"])],
   ["pi-runtime", new Set(["contracts"])],
   ["platform", new Set(["contracts"])],
-  ["research", new Set(["contracts"])],
   ["research-graph", new Set(["contracts"])],
+  ["science-domains", new Set(["contracts"])],
 ]);
 
 function files(directory) {
@@ -56,6 +57,18 @@ for (const scope of [resolve(root, "apps"), resolve(root, "packages")]) {
     if (/[@/]earendil-works\/pi[^"']*\/dist\//.test(source)) failures.push(`${local} imports a private Pi dist path`);
   }
 }
+
+for (const file of files(resolve(root, "apps"))) {
+  const source = readFileSync(file, "utf8");
+  const local = relative(root, file);
+  if (/legacy-gate3|\/api\/gate3\//.test(source)) failures.push(`${local} references the retired Gate 3 product surface`);
+  if (local.startsWith(`apps${sep}web${sep}`) && /research\/ResearchView/.test(source)) failures.push(`${local} imports the retired legacy research dashboard`);
+}
+
+// The orchestration kernel must remain discipline-neutral. Domain vocabulary
+// belongs in science-domain manifests and explicit Server adapters.
+const multiAgentCore = readFileSync(resolve(packageRoot, "multi-agent", "src", "index.ts"), "utf8");
+if (/\bocean\b|\bargo\b|海洋|气候/iu.test(multiAgentCore)) failures.push("packages/multi-agent/src/index.ts hard-codes a science discipline; move it to a ScienceDomainManifest");
 
 if (failures.length) {
   console.error(`Architecture boundary check failed:\n${failures.map((item) => `- ${item}`).join("\n")}`);

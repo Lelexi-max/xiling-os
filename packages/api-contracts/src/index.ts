@@ -13,6 +13,12 @@ export const scientificCanvasLayoutSchema = z.object({
   viewport: z.object({ x: z.number().finite(), y: z.number().finite(), zoom: z.number().finite().min(0.05).max(8) }).optional(),
 });
 export const researchGraphArtifactParamsSchema = researchGraphProjectParamsSchema.extend({ artifactVersionId: z.string().min(1).max(240) });
+export const researchGraphProposalParamsSchema = researchGraphProjectParamsSchema.extend({ proposalId: z.string().uuid() });
+export const researchGraphProposalCreateSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("create_claim"), title: z.string().trim().min(1).max(500), summary: z.string().trim().min(1).max(20_000) }),
+  z.object({ type: z.literal("revise_claim"), claimId: z.string().min(1).max(240), title: z.string().trim().min(1).max(500), summary: z.string().trim().min(1).max(20_000) }),
+]);
+export const researchGraphProposalDecisionSchema = z.object({ decision: z.enum(["accept", "reject"]) });
 
 export const branchContextSchema = z.object({
   activeNodeId: z.string().min(1).max(120),
@@ -43,7 +49,8 @@ export function toOceanSubsetRequest(value: ConnectorRequest): OceanSubsetReques
 export const connectorJobSchema = z.object({ request: connectorRequestSchema, sourceHash: z.string().regex(/^[a-f0-9]{64}$/) });
 export const projectWorkflowCreateSchema = z.object({ projectId: projectIdSchema, sessionId: sessionIdSchema, sourceCallId: z.string().min(1).max(200), request: connectorRequestSchema });
 
-export const projectCreateSchema = z.object({ name: z.string().min(1).max(160), description: z.string().max(1_000).default(""), researchQuestion: z.string().min(1).max(1_000) });
+export const scienceDomainIdSchema = z.string().regex(/^[a-z0-9-]{2,80}$/);
+export const projectCreateSchema = z.object({ name: z.string().min(1).max(160), description: z.string().max(1_000).default(""), researchQuestion: z.string().min(1).max(1_000), domainIds: z.array(scienceDomainIdSchema).min(1).max(8).default(["general-science"]) });
 export const projectUpdateSchema = projectCreateSchema.partial().extend({ status: z.enum(["active", "paused", "archived"]).optional() });
 export const itemCreateSchema = z.object({ projectId: projectIdSchema, kind: z.enum(["milestone", "task", "experiment"]), title: z.string().min(1).max(240), notes: z.string().max(2_000).default("") });
 export const itemUpdateSchema = z.object({ title: z.string().min(1).max(240).optional(), notes: z.string().max(2_000).optional(), status: z.enum(["backlog", "ready", "running", "blocked", "done"]).optional() });
@@ -57,7 +64,17 @@ export const wikiRevisionParamsSchema = idParamsSchema.extend({ version: z.coerc
 
 export const paperParamsSchema = z.object({ paperId: z.string().min(1).max(240) });
 export const paperSchema = z.object({ id: z.string().min(1).max(240), title: z.string().min(1).max(1_000), year: z.number().int().min(0).max(3_000), authors: z.array(z.string().min(1).max(240)).max(200), citationCount: z.number().int().min(0), references: z.array(z.string().min(1).max(240)).max(10_000), source: z.enum(["semantic-scholar", "openalex", "fixture"]), url: z.string().url().optional(), abstract: z.string().max(50_000).optional() });
-export const scopedPaperSchema = z.object({ projectId: projectIdSchema, paper: paperSchema, note: z.string().max(20_000).default(""), stance: z.enum(["supports", "refutes", "qualifies", "insufficient"]).default("insufficient"), confidence: z.number().min(0).max(1).default(0.5) });
+export const scopedPaperSchema = z.object({
+  projectId: projectIdSchema,
+  paper: paperSchema,
+  note: z.string().max(20_000).default(""),
+  stance: z.enum(["supports", "refutes", "qualifies", "insufficient"]).default("insufficient"),
+  confidence: z.number().min(0).max(1).default(0.5),
+  sourceQuote: z.string().trim().max(20_000).default(""),
+  sourceLocator: z.string().trim().max(2_000).optional(),
+  limitations: z.string().trim().max(10_000).default(""),
+  claimRevisionId: z.string().trim().min(1).max(240).optional(),
+});
 export function toPaperRecord(paper: z.infer<typeof paperSchema>): PaperRecord { return { id: paper.id, title: paper.title, year: paper.year, authors: paper.authors, citationCount: paper.citationCount, references: paper.references, source: paper.source, ...(paper.url ? { url: paper.url } : {}), ...(paper.abstract ? { abstract: paper.abstract } : {}) }; }
 export const literatureQuerySchema = z.object({ q: z.string().trim().min(2).max(200), limit: z.coerce.number().int().min(5).max(40).default(20) });
 

@@ -11,22 +11,22 @@ import { tmpdir } from "node:os";
 import { z } from "zod";
 import { ResearchAgentHarness, SqliteAgentSessionStore, type RuntimeUsageInput } from "@xiling/agent-harness";
 import { projectionSchema } from "@xiling/api-contracts";
-import { ContextAssemblyCache, assembleContext, createNodeContextCapsule, estimateContextTokens, projectResearchGraphContext } from "@xiling/context";
+import { ContextAssemblyCache, assembleContext, createNodeContextCapsule, estimateContextTokens, projectResearchGraphContext, type ContextNodeContent } from "@xiling/context";
 import type { AgentStreamEvent, ConnectorMetadataSummary, ContextCapsule, ModelProviderId, OceanSubsetRequest, ResourceUri } from "@xiling/contracts";
 import { LazySkillCatalog, PiMcpGatewayManager, PiRuntimeAdapter, ModelRuntimeStore, TokenLedger, createLiveRoute } from "@xiling/pi-runtime";
-import { Gate3ResearchService, JsonProjectRepository } from "@xiling/research";
-import { DockerArgoResearchRunner, DockerProjectAnalysisRunner } from "./research-runner.js";
+import { DockerProjectAnalysisRunner } from "./research-runner.js";
 import { ConnectorWorkflowService, FixtureConnectorAdapter, JsonConnectorJobRepository, type ConnectorDownloader, type ConnectorMetadataProbe } from "@xiling/connectors";
 import { FileLiteratureCache, LiteratureSearchService, OpenAlexProvider, SemanticScholarProvider } from "@xiling/literature";
 import { KnowledgeService } from "@xiling/knowledge";
 import { LadybugResearchGraphStore } from "@xiling/research-graph";
+import { AgentRoleRegistry, MultiAgentOrchestrator, extractTaskResultText, type AgentTaskRequest, type DelegationMode } from "@xiling/multi-agent";
+import { ScienceDomainRegistry } from "@xiling/science-domains";
 import { CredentialStore } from "@xiling/credentials";
 import { DockerConnectorProbe, DockerConnectorRunner } from "./connector-runner.js";
-import { agentEntryReaderTool, agentHistorySearchTool, researchCapabilityCatalog, selectResearchCapabilities, selectResearchTools } from "./agent-tools.js";
+import { agentEntryReaderTool, agentHistorySearchTool, createResearchTools, researchCapabilityCatalog, researchCapabilityCatalogFor, researchDelegationTool, selectResearchCapabilities, selectResearchTools, shouldOfferResearchDelegation } from "./agent-tools.js";
 import { FixtureProjectAnalysisRunner, ProjectWorkflowService, SqliteProjectWorkflowRepository, type ProjectAnalysisRunner } from "./project-workflow.js";
 import { registerLiteratureRoutes } from "./modules/literature/routes.js";
 import { registerWorkspaceRoutes } from "./modules/workspace/routes.js";
-import { registerLegacyGate3Routes } from "./modules/legacy-gate3/routes.js";
 import { ModelSettingsService, humanizeModelFailure, registerSettingsRoutes } from "./modules/settings/routes.js";
 import { registerConnectorRoutes } from "./modules/connectors/routes.js";
 import { registerWorkflowRoutes } from "./modules/workflows/routes.js";
@@ -38,8 +38,11 @@ import { registerMcpSettingsRoutes } from "./modules/mcp/routes.js";
 import { ResearchGraphReconciler } from "./research-graph-projector.js";
 import { registerResearchGraphRoutes } from "./modules/research-graph/routes.js";
 import { ScientificCanvasLayoutStore } from "./modules/research-graph/layout-store.js";
+import { ResearchGraphProposalStore } from "./modules/research-graph/proposal-store.js";
+import { SourceContentResolver } from "./source-content-resolver.js";
+import { registerScienceDomainRoutes } from "./modules/science-domains/routes.js";
 
-export function createApp(options: { research?: Gate3ResearchService; dataRoot?: string; webRoot?: string; literatureFetch?: typeof fetch; literatureSleep?: (ms: number, signal?: AbortSignal) => Promise<void>; connectorProbe?: ConnectorMetadataProbe; connectorDownloader?: ConnectorDownloader; connectorMode?: "fixture" | "live"; projectAnalysisRunner?: ProjectAnalysisRunner } = {}) {
+export function createApp(options: { dataRoot?: string; webRoot?: string; literatureFetch?: typeof fetch; literatureSleep?: (ms: number, signal?: AbortSignal) => Promise<void>; connectorProbe?: ConnectorMetadataProbe; connectorDownloader?: ConnectorDownloader; connectorMode?: "fixture" | "live"; projectAnalysisRunner?: ProjectAnalysisRunner } = {}) {
   const app = Fastify({ logger: false });
   void app.register(cors, { origin: /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/ });
   const webRoot = options.webRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
@@ -48,14 +51,13 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
     ? resolve(tmpdir(), `xiling-app-test-${randomUUID()}`)
     : resolve(dirname(fileURLToPath(import.meta.url)), "../../../data");
   const dataRoot = options.dataRoot ?? defaultDataRoot;
-  const gate3Root = resolve(dataRoot, "gate3");
   const gate4Root = resolve(dataRoot, "gate4");
   const readManagedArtifact = async (uri: string, offsetBytes: number, maxBytes: number) => {
-    const match = /^artifact:\/\/(workflow|gate3)\/([a-zA-Z0-9-]+)\/(.+)$/.exec(uri);
-    if (!match) throw new Error("Only workflow and gate3 text Artifacts can be read through this tool");
-    const relative = match[3]!;
+    const match = /^artifact:\/\/workflow\/([a-zA-Z0-9-]+)\/(.+)$/.exec(uri);
+    if (!match) throw new Error("Only formal Workflow text Artifacts can be read through this tool");
+    const relative = match[2]!;
     if (relative.includes("\\") || relative.split("/").includes("..") || !/\.(json|csv|md|txt|log)$/i.test(relative)) throw new Error("Artifact type or path is not safe for text inspection");
-    const root = match[1] === "workflow" ? resolve(gate4Root, "project-runs", match[2]!, "artifacts") : resolve(gate3Root, "runs", match[2]!, "artifacts");
+    const root = resolve(gate4Root, "project-runs", match[1]!, "artifacts");
     const path = resolve(root, relative);
     if (!path.startsWith(`${root}${sep}`)) throw new Error("Artifact path escapes its managed root");
     const handle = await open(path, "r");
@@ -79,9 +81,13 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
   }
   const migrationBackup = priorMigrationBackup ?? ((existsSync(knowledgePath) || existsSync(agentCenterPath)) ? createGate45CMigrationBackup({ gate4Root }) : undefined);
   const knowledge = new KnowledgeService(knowledgePath);
+  const scienceDomains = new ScienceDomainRegistry();
+  const installedCapabilityCatalog = researchCapabilityCatalogFor(scienceDomains.list().flatMap((domain) => domain.capabilities));
+  registerScienceDomainRoutes(app, scienceDomains);
   const agentSessionStore = new SqliteAgentSessionStore(agentCenterPath);
   const researchGraph = new LadybugResearchGraphStore(resolve(gate4Root, "research-graph.lbdb"));
   const scientificCanvasLayout = new ScientificCanvasLayoutStore(resolve(gate4Root, "scientific-canvas-layout.sqlite"));
+  const researchGraphProposals = new ResearchGraphProposalStore(resolve(gate4Root, "research-graph-proposals.sqlite"));
   const credentials = new CredentialStore(resolve(dataRoot, "credentials"));
   const credentialsReady = credentials.initialize();
   const modelRuntime = new ModelRuntimeStore(resolve(gate4Root, "model-runtime.json"));
@@ -89,12 +95,12 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
   const skillCatalog = new LazySkillCatalog(resolve(dirname(fileURLToPath(import.meta.url)), "../../../skills"));
   const skillCatalogReady = skillCatalog.initialize().then(() => {
     const knownSkills = new Set(skillCatalog.list().map((skill) => skill.name));
-    for (const capability of researchCapabilityCatalog) for (const skillName of capability.skillNames) if (!knownSkills.has(skillName)) throw new Error(`Capability ${capability.id} references unknown Skill ${skillName}`);
+    for (const capability of installedCapabilityCatalog) for (const skillName of capability.skillNames) if (!knownSkills.has(skillName)) throw new Error(`Capability ${capability.id} references unknown Skill ${skillName}`);
   });
   const contextAssemblyCache = new ContextAssemblyCache();
   const modelRuntimeReady = modelRuntime.initialize();
   const modelSettings = new ModelSettingsService(credentials, modelRuntime, credentialsReady, modelRuntimeReady);
-  registerSettingsRoutes(app, modelSettings, credentialsReady, { ready: skillCatalogReady, list: () => skillCatalog.list(), capabilities: researchCapabilityCatalog });
+  registerSettingsRoutes(app, modelSettings, credentialsReady, { ready: skillCatalogReady, list: () => skillCatalog.list(), capabilities: installedCapabilityCatalog });
   const mcpGateway = new PiMcpGatewayManager(resolve(gate4Root, "mcp", "host"));
   const mcpSettings = new McpSettingsService(resolve(gate4Root, "mcp"), credentials, mcpGateway);
   const mcpReady = credentialsReady.then(() => mcpSettings.initialize());
@@ -142,13 +148,23 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
   const activeConnectorRuns = new Map<string, AbortController>();
   app.addHook("onClose", async () => knowledge.close());
   app.addHook("onClose", async () => { for (const controller of activeConnectorRuns.values()) controller.abort("server closing"); });
-  const research = options.research ?? new Gate3ResearchService(
-    new JsonProjectRepository(resolve(gate3Root, "project.json")),
-    new DockerArgoResearchRunner(resolve(gate3Root, "runs")),
-  );
-  const researchReady = research.initialize();
-  registerLegacyGate3Routes(app, { research, ready: researchReady, runsRoot: resolve(gate3Root, "runs") });
-  registerLiteratureRoutes(app, { literature, credentialsReady, evidence: knowledge });
+  registerLiteratureRoutes(app, { literature, credentialsReady, evidence: knowledge, validateClaimRevision: async (projectId, entityId) => {
+    await researchGraphReady; await researchGraphReconciler.reconcile();
+    const entity = await researchGraph.getEntity(projectId, entityId);
+    return entity?.kind === "ClaimRevision";
+  } });
+  const sourceContentResolver = new SourceContentResolver({
+    getWikiPage: (id) => knowledge.getWikiPage(id),
+    listEvidence: (projectId) => knowledge.listEvidence(projectId),
+    getAgentRun: (runId) => {
+      const run = agentSessionStore.getRun(runId);
+      const session = run ? agentSessionStore.getSession(run.sessionId) : undefined;
+      if (!run || !session) return undefined;
+      return { projectId: session.projectId, prompt: run.prompt, entries: agentSessionStore.snapshot(runId).entries.map(({ role, kind, text }) => ({ role: role ?? kind, text })) };
+    },
+    getWorkflow: (id) => projectWorkflow.get(id),
+    readArtifact: readManagedArtifact,
+  });
   const projectResearchContext = async (projectId: string, request: { activeNodeId: string; quotedNodeIds: string[]; capabilityQuery?: string; activatedCapabilityIds?: string[] }) => {
     await researchGraphReady;
     await researchGraphReconciler.reconcile();
@@ -163,24 +179,56 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
       const capsule = existing?.sourceRevision === candidate.sourceRevision ? existing : knowledge.upsertContextCapsule(projectId, candidate);
       capsuleMap.set(node.id, capsule);
     }
-    const resolvedCapabilities = request.activatedCapabilityIds ?? (request.capabilityQuery ? selectResearchCapabilities(request.capabilityQuery).map((capability) => capability.id) : []);
+    const project = knowledge.getProject(projectId);
+    if (!project) throw new Error("Project not found");
+    const domain = scienceDomains.resolve(project.domainIds);
+    const projectCapabilityCatalog = researchCapabilityCatalogFor(domain.capabilities);
+    const resolvedCapabilities = request.activatedCapabilityIds ?? (request.capabilityQuery ? selectResearchCapabilities(request.capabilityQuery, projectCapabilityCatalog).map((capability) => capability.id) : []);
     const projectionRequest = { activeNodeId: request.activeNodeId, quotedNodeIds: request.quotedNodeIds, activatedCapabilityIds: resolvedCapabilities };
-    const projection = projectResearchGraphContext(projectionRequest, graph, capsuleMap, researchCapabilityCatalog);
-    return { graph, projection };
+    let projection = projectResearchGraphContext(projectionRequest, graph, capsuleMap, projectCapabilityCatalog);
+    const selectedIds = [...new Set([...projection.activeBranchNodeIds, ...projection.quotedNodeIds])];
+    const resolvedNodes = new Map<string, ContextNodeContent>(graph.nodes.map((node) => [node.id, { id: node.id, title: node.title, body: node.summary, sourceLabel: "科研图结构化摘要（非原文）", ...(node.sourceLocator || node.uri ? { sourceLocator: node.sourceLocator ?? node.uri } : {}) }]));
+    for (const nodeId of selectedIds) {
+      const node = graph.nodes.find((candidate) => candidate.id === nodeId);
+      if (!node) continue;
+      const resolved = await sourceContentResolver.resolve(projectId, node);
+      resolvedNodes.set(node.id, resolved);
+      const artifactUris = (node.uri && /^(artifact|dataset|project):\/\//.test(node.uri) ? [node.uri as ResourceUri] : []) as ContextCapsule["artifactUris"];
+      const candidate = createNodeContextCapsule({ projectId, nodeId: node.id, title: node.title, body: resolved.body, artifactUris, updatedAt: node.updatedAt });
+      const existing = capsuleMap.get(candidate.id);
+      capsuleMap.set(node.id, existing?.sourceRevision === candidate.sourceRevision ? existing : knowledge.upsertContextCapsule(projectId, candidate));
+    }
+    projection = projectResearchGraphContext(projectionRequest, graph, capsuleMap, projectCapabilityCatalog);
+    return { graph, projection, resolvedNodes };
   };
+  const agentRoles = new AgentRoleRegistry(scienceDomains.list().flatMap((domain) => domain.agentRoles));
+  let multiAgentOrchestrator: MultiAgentOrchestrator;
   const agentHarness = new ResearchAgentHarness(agentSessionStore, {
     create: async ({ sessionId, runId, prompt, attachments, commandContext, history, onUsage }) => {
-      const command = z.object({ projectId: z.string().min(1).max(120), context: z.object({ activeNodeId: z.string().min(1).max(120), quotedNodeIds: z.array(z.string().min(1).max(120)).max(12) }).optional() }).parse(commandContext);
+      const command = z.object({
+        projectId: z.string().min(1).max(120),
+        context: z.object({ activeNodeId: z.string().min(1).max(120), quotedNodeIds: z.array(z.string().min(1).max(120)).max(12) }).optional(),
+        multiAgent: z.object({ delegationId: z.string().min(1).max(160), rootRunId: z.string().min(1).max(160), parentRunId: z.string().min(1).max(160), roleId: z.string().min(1).max(80), isolation: z.enum(["scoped", "blind", "execution"]), contextManifest: z.unknown(), budget: z.object({ maxDurationMs: z.number().positive(), maxToolCalls: z.number().int().positive(), maxCost: z.number().positive().optional() }) }).optional(),
+      }).parse(commandContext);
       const activeProject = knowledge.getProject(command.projectId);
       if (!activeProject || activeProject.status === "archived") throw new Error("Project not found or archived");
       const session = agentSessionStore.getSession(sessionId);
       if (!session || session.projectId !== activeProject.id) throw new Error("Agent session project mismatch");
-      const activeCapabilities = selectResearchCapabilities(prompt);
-      let activeTools = selectResearchTools(prompt, { project: activeProject, knowledge, literature, readArtifact: readManagedArtifact });
+      const activeDomain = scienceDomains.resolve(activeProject.domainIds);
+      const activeCapabilityCatalog = researchCapabilityCatalogFor(activeDomain.capabilities);
+      const allowedRoleIds = new Set(activeDomain.agentRoles.map((role) => role.id));
+      const childRole = command.multiAgent && allowedRoleIds.has(command.multiAgent.roleId) ? agentRoles.get(command.multiAgent.roleId) : undefined;
+      if (command.multiAgent && !childRole) throw new Error("Unknown delegated Agent role");
+      const activeCapabilities = childRole
+        ? activeCapabilityCatalog.filter((capability) => childRole.allowedCapabilities.includes(capability.id))
+        : selectResearchCapabilities(prompt, activeCapabilityCatalog);
+      let activeTools = childRole
+        ? createResearchTools(activeCapabilities, { project: activeProject, knowledge, literature, readArtifact: readManagedArtifact })
+        : selectResearchTools(prompt, { project: activeProject, knowledge, literature, readArtifact: readManagedArtifact }, activeCapabilityCatalog);
       await skillCatalogReady;
       const activatedSkills = await skillCatalog.activate(prompt, activeCapabilities.map((capability) => capability.id));
       await mcpReady;
-      if (mcpGateway.matches(prompt)) activeTools = [...activeTools, mcpGateway.tool()];
+      if (!childRole && mcpGateway.matches(prompt)) activeTools = [...activeTools, mcpGateway.tool()];
       const persistedContext = knowledge.getChatSessionContext(sessionId);
       const defaultContext = { activeNodeId: `research-question:${activeProject.id}`, quotedNodeIds: [] };
       const requestedContext = command.context ?? (persistedContext ? { activeNodeId: persistedContext.activeNodeId, quotedNodeIds: persistedContext.quotedNodeIds } : defaultContext);
@@ -208,12 +256,14 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
       const currentImages = resolveImages(attachments);
       const historyAttachments = new Map(history.map((message) => [message.id, message.attachments ?? []] as const));
       const coreRules = [
-        "你是汐灵 OS 的海洋科学研究 Agent。",
+        "你是汐灵 OS 的科学研究 Agent。",
+        ...activeDomain.promptFragments,
         "只处理当前项目；需要项目细节时先调用 read_project_context。",
         "只在用户问题确实需要时调用其余已激活工具；不得假装工具已经运行。",
         "MCP 只允许先搜索/描述后调用；若工具返回需要审批，必须停止并请用户在设置中显式信任对应服务器后重试，不得规避审批。",
         "任何下载、计算、外部写入或结论沉淀都必须停在计划/建议阶段，等待用户确认。",
         "引用工具结果时说明数据源；缺少证据时明确说明。",
+        ...(childRole ? [childRole.systemPrompt, "你是隔离的子智能体，不能创建其他子智能体。只返回当前 TaskPacket 的结果，不延伸为项目最终结论。"] : ["当任务存在可独立验收的并行前沿、竞争假说或盲审价值时，可使用 delegate_research_tasks；简单任务和需要单一连续推理的任务不要委派。"]),
       ].join("\n");
       const projectPrompt = `当前项目：${activeProject.name}\n研究问题：${activeProject.researchQuestion}\n当前科研图活动实体：${resolvedContext.activeNodeId}\n当前科研图显式引用：${resolvedContext.quotedNodeIds.join(", ") || "无"}`;
       const historyRecords = history;
@@ -223,7 +273,6 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
         ? agentSessionStore.listSessionEntries(sessionId).filter((entry) => entry.sequence <= latestCompaction.coveredThroughSequence && entry.kind !== "compaction")
         : [];
       for (const entry of compactedEntries) allowedSourceEntries.add(entry.id);
-      const sourceLookupPrompt = "";
       const historyLookupPrompt = latestCompaction
         ? "较早研究对话已压缩为结构化索引。遇到摘要无法回答的旧决策、证据或产物时，先调用 search_agent_history，再按返回的 Entry ID 调用 read_agent_entry；不要猜测被压缩内容。"
         : "";
@@ -255,6 +304,25 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
             .map(({ entry }) => ({ entryId: entry.id, kind: entry.kind, excerpt: entry.text.replace(/\s+/gu, " ").slice(0, 700), createdAt: entry.createdAt }));
         },
       })];
+      if (!childRole && shouldOfferResearchDelegation(prompt)) {
+        activeTools = [...activeTools, researchDelegationTool({
+          roles: activeDomain.agentRoles,
+          delegate: async (mode: DelegationMode, tasks: AgentTaskRequest[], signal?: AbortSignal) => multiAgentOrchestrator.delegate({
+            projectId: activeProject.id,
+            parentRunId: runId,
+            mode,
+            tasks,
+            contextManifest: {
+              projectId: activeProject.id,
+              projectBriefRevision: `${activeProject.id}:${activeProject.updatedAt}`,
+              researchEntityIds: [...new Set([resolvedContext.activeNodeId, ...resolvedContext.quotedNodeIds])],
+              sourceUris: researchProjection.projection.artifactUris,
+              projectionHash,
+            },
+            ...(signal ? { signal } : {}),
+          }),
+        })];
+      }
       const modelContextWindow = liveRoute?.contextWindow ?? 128_000;
       const maxOutputTokens = liveRoute?.maxOutputTokens ?? 8_192;
       const projectionHash = researchProjection.projection.projectionHash;
@@ -262,7 +330,7 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
       let contextAssembly = contextAssemblyCache.get(cacheKey);
       if (contextAssembly) contextAssembly.trace.cache = "hit";
       else {
-        contextAssembly = assembleContext({ projection: researchProjection.projection, nodes: new Map(researchProjection.graph.nodes.map((node) => [node.id, { id: node.id, title: node.title, body: node.summary }] as const)), history: historyRecords, modelContextWindow, maxOutputTokens, fixedPromptTokens: estimateContextTokens(`${coreRules}\n${projectPrompt}\n当前用户问题：${prompt}`), toolSchemaTokens: estimateContextTokens(JSON.stringify(activeTools.map(({ name, description, parameters }) => ({ name, description, parameters })))), skillTokens: estimateContextTokens(activatedSkills.prompt), activatedSkillNames: activatedSkills.skills.map((skill) => skill.name) });
+        contextAssembly = assembleContext({ projection: researchProjection.projection, nodes: researchProjection.resolvedNodes, history: historyRecords, modelContextWindow, maxOutputTokens, fixedPromptTokens: estimateContextTokens(`${coreRules}\n${projectPrompt}\n当前用户问题：${prompt}`), toolSchemaTokens: estimateContextTokens(JSON.stringify(activeTools.map(({ name, description, parameters }) => ({ name, description, parameters })))), skillTokens: estimateContextTokens(activatedSkills.prompt), activatedSkillNames: activatedSkills.skills.map((skill) => skill.name) });
         contextAssemblyCache.set(cacheKey, contextAssembly);
       }
       // Binary visual context is deliberately lazy: the current turn is always
@@ -275,7 +343,7 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
         : undefined;
       const runtime = new PiRuntimeAdapter({
         sessionId,
-        systemPrompt: liveRoute ? [coreRules, projectPrompt, contextAssembly.canvasText ? `科研图局部上下文：\n${contextAssembly.canvasText}` : "当前科研图选择没有可用上下文。", sourceLookupPrompt, historyLookupPrompt, activatedSkills.prompt ? `本轮按需加载的 Skill：\n${activatedSkills.prompt}` : "本轮没有命中额外 Skill。"].filter(Boolean).join("\n") : `你是汐灵 OS 的离线演示 Agent。当前项目：${activeProject.name}。`,
+        systemPrompt: liveRoute ? [coreRules, projectPrompt, contextAssembly.canvasText ? `科研图局部上下文：\n${contextAssembly.canvasText}` : "当前科研图选择没有可用上下文。", historyLookupPrompt, activatedSkills.prompt ? `本轮按需加载的 Skill：\n${activatedSkills.prompt}` : "本轮没有命中额外 Skill。"].filter(Boolean).join("\n") : `你是汐灵 OS 的离线演示 Agent。当前项目：${activeProject.name}。`,
         ...(liveRoute ? { route: liveRoute } : {}),
         initialMessages: contextAssembly.history.map((message) => {
           const descriptors = historyAttachments.get(message.id) ?? [];
@@ -349,6 +417,60 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
       },
     },
   });
+  multiAgentOrchestrator = new MultiAgentOrchestrator(agentSessionStore, {
+    createChildSession(projectId) { return agentHarness.createSession({ projectId }).id; },
+    async execute(input) {
+      // Blind review receives declared sources, but not the Director's selected
+      // claim/conclusion nodes or conversation. This keeps the review useful
+      // without preserving the anchoring signal that isolation is meant to remove.
+      const visibleEntityIds = input.isolation === "blind" ? [] : input.contextManifest.researchEntityIds;
+      const activeNodeId = visibleEntityIds[0] ?? `research-question:${input.projectId}`;
+      const quotedNodeIds = visibleEntityIds.slice(1, 12);
+      const declaredSources = input.contextManifest.sourceUris.slice(0, 12);
+      const taskPrompt = [
+        `子任务角色：${input.role.title}`,
+        `任务目标：${input.objective}`,
+        `隔离级别：${input.isolation}`,
+        `允许读取的科研实体：${visibleEntityIds.join("、") || "仅项目研究问题"}`,
+        `声明来源 URI：${declaredSources.join("、") || "无"}`,
+        "输出要求：给出精简结论、来源 URI、Artifact URI（如有）以及局限；不要给项目作最终决策。",
+      ].join("\n");
+      const started = agentHarness.startTurn({
+        sessionId: input.childSessionId,
+        prompt: taskPrompt,
+        clientCommandId: `delegation:${input.delegationId}`,
+        context: {
+          projectId: input.projectId,
+          context: { activeNodeId, quotedNodeIds },
+          multiAgent: {
+            delegationId: input.delegationId,
+            rootRunId: input.rootRunId,
+            parentRunId: input.parentRunId,
+            roleId: input.role.id,
+            isolation: input.isolation,
+            contextManifest: input.contextManifest,
+            budget: input.budget,
+          },
+        },
+      });
+      input.onRunStarted(started.run.id);
+      const cancel = () => agentHarness.cancel(started.run.id);
+      input.signal?.addEventListener("abort", cancel, { once: true });
+      try {
+        for await (const _event of agentHarness.subscribe(started.run.id, 0)) { /* durable completion barrier */ }
+      } finally { input.signal?.removeEventListener("abort", cancel); }
+      const snapshot = agentHarness.snapshot(started.run.id);
+      const text = [...snapshot.entries].reverse().find((entry) => entry.kind === "assistant")?.text ?? "";
+      if (snapshot.run.status === "failed") throw new Error(snapshot.run.error ?? "Delegated Agent failed");
+      const parsed = extractTaskResultText(text);
+      return {
+        status: snapshot.run.status === "cancelled" ? "cancelled" : "completed",
+        ...parsed,
+        usage: { totalTokens: snapshot.usageTotals.totalTokens, cost: snapshot.usageTotals.cost },
+        ...(snapshot.run.error ? { error: snapshot.run.error } : {}),
+      };
+    },
+  }, agentRoles, { maxConcurrency: 3, maxTasksPerDelegation: 6, defaultBudget: { maxDurationMs: 180_000, maxToolCalls: 12, maxCost: 2 } });
   const migrationReady = (async () => {
     let importedMessages = 0;
     for (const project of knowledge.listProjects()) {
@@ -374,10 +496,11 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
       await researchGraph.close();
       projectWorkflowRepository.close();
       scientificCanvasLayout.close();
+      researchGraphProposals.close();
     }
   });
-  registerWorkspaceRoutes(app, { knowledge, agentSessions: agentSessionStore, agentMigrationReady: migrationReady, onChatSessionCreated: (session) => agentHarness.createSession({ id: session.id, projectId: session.projectId }), onChatSessionArchived: (session) => agentHarness.archiveSession(session.id), validateResearchContext: async (projectId, context) => projectResearchContext(projectId, context) });
-  registerAgentCenterRoutes(app, { harness: agentHarness, store: agentSessionStore, ready: Promise.all([migrationReady, workflowProjectionReady]), projectExists: (projectId) => Boolean(knowledge.getProject(projectId)), projectActive: (projectId) => { const project = knowledge.getProject(projectId); return Boolean(project && project.status !== "archived"); }, sessionExists: (sessionId, projectId) => knowledge.getChatSession(sessionId)?.projectId === projectId, sessionTitle: (sessionId) => knowledge.getChatSession(sessionId)?.title, acceptedInputModalities: async () => {
+  registerWorkspaceRoutes(app, { knowledge, agentSessions: agentSessionStore, agentMigrationReady: migrationReady, onChatSessionCreated: (session) => agentHarness.createSession({ id: session.id, projectId: session.projectId }), onChatSessionArchived: (session) => agentHarness.archiveSession(session.id), validateDomainIds: (ids) => scienceDomains.validate(ids), validateResearchContext: async (projectId, context) => projectResearchContext(projectId, context) });
+  registerAgentCenterRoutes(app, { harness: agentHarness, store: agentSessionStore, ready: Promise.all([migrationReady, workflowProjectionReady]), projectExists: (projectId) => Boolean(knowledge.getProject(projectId)), projectActive: (projectId) => { const project = knowledge.getProject(projectId); return Boolean(project && project.status !== "archived"); }, sessionExists: (sessionId, projectId) => knowledge.getChatSession(sessionId)?.projectId === projectId, sessionTitle: (sessionId) => knowledge.getChatSession(sessionId)?.title, listAgentRoles: () => agentRoles.list().map(({ systemPrompt: _systemPrompt, canDelegate: _canDelegate, ...role }) => role), acceptedInputModalities: async () => {
     const status = await modelStatus();
     if (!status.ready || !status.selectedModel) return ["text"];
     return status.selectedModel.inputModalities.filter((modality) => modality === "text" || modality === "image");
@@ -393,7 +516,23 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
 
   registerConnectorRoutes(app, { root: gate4Root, mode: connectorMode, credentials, credentialsReady, probe: connectorProbe, workflow: connectorWorkflow, workflowReady: connectorReady, metadata: connectorMetadata, activeRuns: activeConnectorRuns });
   registerWorkflowRoutes(app, { root: gate4Root, workflow: projectWorkflow, ready: projectWorkflowReady, projects: knowledge, conversations: knowledge, settle: settleProjectWorkflow });
-  registerResearchGraphRoutes(app, { graph: researchGraph, layout: scientificCanvasLayout, ready: researchGraphReady, reconcile: () => researchGraphReconciler.reconcile(), projectExists: (projectId) => Boolean(knowledge.getProject(projectId)) });
+  registerResearchGraphRoutes(app, { graph: researchGraph, layout: scientificCanvasLayout, proposals: researchGraphProposals, ready: researchGraphReady, reconcile: () => researchGraphReconciler.reconcile(), projectExists: (projectId) => Boolean(knowledge.getProject(projectId)) });
+  app.get("/api/projects/:projectId/overview", async (request, reply) => {
+    const parsed = z.object({ projectId: z.string().min(1).max(120) }).safeParse(request.params);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid project overview request" });
+    const project = knowledge.getProject(parsed.data.projectId);
+    if (!project || project.status === "archived") return reply.code(404).send({ error: "Project not found" });
+    await Promise.all([projectWorkflowReady, researchGraphReady]);
+    await researchGraphReconciler.reconcile();
+    return {
+      project,
+      items: knowledge.listItems(project.id),
+      evidence: knowledge.listEvidence(project.id),
+      researchGraph: await researchGraph.getProjection(project.id, "all"),
+      workflows: projectWorkflow.list({ projectId: project.id }),
+      generatedAt: new Date().toISOString(),
+    };
+  });
 
   app.get("/health", async () => ({
     status: "ok",
@@ -423,7 +562,8 @@ export function createApp(options: { research?: Gate3ResearchService; dataRoot?:
       ...(await tokenLedger.summarize()),
       assemblyCache: contextAssemblyCache.stats(),
       skills: skillCatalog.list().map(({ name, description, version, capabilityIds }) => ({ name, description, version, capabilityIds })),
-      capabilities: researchCapabilityCatalog.map(({ id, description, toolName, skillNames }) => ({ id, description, toolName, skillNames })),
+      capabilities: installedCapabilityCatalog.map(({ id, description, toolName, skillNames }) => ({ id, description, toolName, skillNames })),
+      scienceDomains: scienceDomains.list().map(({ id, version }) => ({ id, version })),
     };
   });
 

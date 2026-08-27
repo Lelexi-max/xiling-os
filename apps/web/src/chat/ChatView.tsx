@@ -5,6 +5,8 @@ import { ResearchWorkflowCard } from "./ResearchWorkflowCard.js";
 import { runResearchTurn } from "../lib/research-session-client.js";
 import { formatAttachmentSize, nativeImageUpload, NATIVE_IMAGE_ACCEPT, readNativeImages, type PendingNativeImage } from "../lib/native-image-input.js";
 import { AgentExecutionGraphView } from "./AgentExecutionGraphView.js";
+import { ArtifactViewer } from "../components/ArtifactViewer.js";
+import { ScientificMarkdown } from "../components/ScientificMarkdown.js";
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
@@ -12,6 +14,7 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   useExternalStoreRuntime,
+  useMessagePartText,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 
@@ -43,7 +46,7 @@ const convertMessage = (message: UiMessage): ThreadMessageLike => ({
     : {}),
 });
 
-const TextPart: FC = () => <MessagePartPrimitive.Text />;
+const TextPart: FC = () => <ScientificMarkdown text={useMessagePartText().text} />;
 const ImagePart: FC = () => <MessagePartPrimitive.Image className="chat-message-image" />;
 const UserMessage: FC = () => (
   <MessagePrimitive.Root className="aui-message user">
@@ -72,16 +75,18 @@ export function ChatView({ project }: { project: Gate4Project }) {
   const [tools, setTools] = useState<ToolActivity[]>([]);
   const [workflows, setWorkflows] = useState<ProjectResearchWorkflow[]>([]);
   const [saveStatus, setSaveStatus] = useState("");
+  const [pendingSaveTarget, setPendingSaveTarget] = useState<"task" | "wiki">();
   const [modelRuntime, setModelRuntime] = useState<ModelRuntimeStatus>();
   const [pendingImages, setPendingImages] = useState<PendingNativeImage[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [contextTrace, setContextTrace] = useState<ContextAssemblyTrace>();
   const [artifactWidth, setArtifactWidth] = useState(560);
-  const [artifactOpen, setArtifactOpen] = useState(true);
+  const [artifactOpen, setArtifactOpen] = useState(() => typeof window === "undefined" || window.innerWidth >= 1_200);
   const [artifactExpanded, setArtifactExpanded] = useState(false);
+  const [workbenchWidth, setWorkbenchWidth] = useState(0);
   const [primaryMode, setPrimaryMode] = useState<"conversation" | "execution">("conversation");
   const [graphRefreshKey, setGraphRefreshKey] = useState(0);
-  const artifactBeforeGraphRef = useRef(true);
+  const artifactBeforeGraphRef = useRef(typeof window === "undefined" || window.innerWidth >= 1_200);
   const workbenchRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let cancelled = false;
@@ -98,7 +103,7 @@ export function ChatView({ project }: { project: Gate4Project }) {
     } else {
       setMessages([welcomeMessage(project)]);
     }
-    setTools([]); setContextTrace(undefined); setSaveStatus(""); setPendingImages([]); setAttachmentError(""); setArtifactExpanded(false); setArtifactOpen(project.id === "ocean-heatwave");
+    setTools([]); setContextTrace(undefined); setSaveStatus(""); setPendingImages([]); setAttachmentError(""); setArtifactExpanded(false); setArtifactOpen(typeof window === "undefined" || window.innerWidth >= 1_200);
     return () => { cancelled = true; };
   }, [project.id, activeSessionId]);
   useEffect(() => {
@@ -109,12 +114,13 @@ export function ChatView({ project }: { project: Gate4Project }) {
   useEffect(() => {
     const clampWidth = () => {
       const width = workbenchRef.current?.getBoundingClientRect().width;
-      if (width) setArtifactWidth((current) => Math.max(360, Math.min(current, width - 390)));
+      if (width) { setWorkbenchWidth(width); setArtifactWidth((current) => Math.max(360, Math.min(current, Math.max(360, width - 520)))); }
     };
     clampWidth();
-    window.addEventListener("resize", clampWidth);
-    return () => window.removeEventListener("resize", clampWidth);
+    const observer = new ResizeObserver(clampWidth); if (workbenchRef.current) observer.observe(workbenchRef.current);
+    return () => observer.disconnect();
   }, []);
+  useEffect(() => { const saved = Number(localStorage.getItem(`xiling:artifact-width:${project.id}`)); if (Number.isFinite(saved) && saved >= 360) setArtifactWidth(saved); }, [project.id]);
 
   const runtime = useExternalStoreRuntime({
     messages,
@@ -207,15 +213,18 @@ export function ChatView({ project }: { project: Gate4Project }) {
     const title = `Agent 研究记录 · ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
     try {
       if (target === "task") {
-        const response = await fetch("/api/gate4/project-items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, kind: "task", title, notes: lastAssistant.text.slice(0, 1_900) }) });
+        const provenance = lastAssistant.runId ? `\n\n来源 Agent Run：${lastAssistant.runId}` : "";
+        const response = await fetch("/api/gate4/project-items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, kind: "task", title, notes: `${lastAssistant.text.slice(0, 1_700)}${provenance}` }) });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         await response.json() as ProjectItem;
       } else if (target === "wiki") {
-        const response = await fetch("/api/gate4/wiki/pages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, title, markdown: `# ${title}\n\n${lastAssistant.text}` }) });
+        const provenance = lastAssistant.runId ? `\n\n---\n\n> 来源：Agent Run \`${lastAssistant.runId}\`。发布前请核对证据与结论。` : "";
+        const response = await fetch("/api/gate4/wiki/pages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, title, markdown: `# ${title}\n\n${lastAssistant.text}${provenance}` }) });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         await response.json() as WikiPageDetail;
       }
       setSaveStatus(target === "task" ? "已保存到项目任务" : "已创建 Wiki 页面");
+      setPendingSaveTarget(undefined);
     } catch (cause) { setSaveStatus(`保存失败：${cause instanceof Error ? cause.message : String(cause)}`); }
   };
 
@@ -225,7 +234,8 @@ export function ChatView({ project }: { project: Gate4Project }) {
     if (!workbench) return;
     const move = (pointer: PointerEvent) => {
       const bounds = workbench.getBoundingClientRect();
-      setArtifactWidth(Math.max(360, Math.min(bounds.width - 390, bounds.right - pointer.clientX)));
+      const next = Math.max(360, Math.min(bounds.width - 520, bounds.right - pointer.clientX));
+      setArtifactWidth(next); localStorage.setItem(`xiling:artifact-width:${project.id}`, String(next));
     };
     const stop = () => {
       document.removeEventListener("pointermove", move);
@@ -236,6 +246,8 @@ export function ChatView({ project }: { project: Gate4Project }) {
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", stop);
   };
+
+  const artifactDocked = workbenchWidth >= 1_040 && !artifactExpanded;
 
   const switchPrimaryMode = (next: "conversation" | "execution") => {
     if (next === primaryMode) return;
@@ -251,10 +263,10 @@ export function ChatView({ project }: { project: Gate4Project }) {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <div className={`chat-workbench ${artifactExpanded ? "artifact-expanded" : ""}`} ref={workbenchRef} style={{ gridTemplateColumns: artifactExpanded || !artifactOpen ? "minmax(0, 1fr)" : `minmax(390px, 1fr) 7px ${artifactWidth}px` }}>
+      <div className={`chat-workbench ${artifactExpanded ? "artifact-expanded" : ""} ${artifactOpen && !artifactDocked && !artifactExpanded ? "artifact-overlay" : ""}`} ref={workbenchRef} style={{ gridTemplateColumns: artifactExpanded || !artifactOpen || !artifactDocked ? "minmax(0, 1fr)" : `minmax(520px, 1fr) 7px ${artifactWidth}px` }}>
         <ThreadPrimitive.Root className="chat-view">
           <div className="chat-heading"><div><small>{project.name} · {primaryMode === "conversation" ? "研究对话" : "Agent 可观测性"}</small><h1>{primaryMode === "conversation" ? activeSession?.title ?? "新对话" : "Agent 运行图"}</h1></div><div className="chat-heading-actions"><div className="chat-primary-switch"><button className={primaryMode === "conversation" ? "active" : ""} onClick={() => switchPrimaryMode("conversation")}>对话</button><button className={primaryMode === "execution" ? "active" : ""} onClick={() => switchPrimaryMode("execution")}>运行图</button></div><div className={`chat-model-state ${modelRuntime?.mode ?? "offline"}`}><i />{modelRuntime?.mode === "live" ? modelRuntime.ready ? `${modelRuntime.selectedModel?.name ?? modelRuntime.modelId}` : "路由待检查" : "离线演示"}</div>{!artifactOpen && primaryMode === "conversation" ? <button onClick={() => setArtifactOpen(true)}>打开产物面板</button> : null}</div></div>
-          {primaryMode === "execution" ? <AgentExecutionGraphView projectId={project.id} activeSessionId={activeSessionId} refreshKey={graphRefreshKey} /> : <>
+          {primaryMode === "execution" ? <AgentExecutionGraphView projectId={project.id} activeSessionId={activeSessionId} refreshKey={graphRefreshKey} onReturnToChat={() => switchPrimaryMode("conversation")} /> : <>
             <ThreadPrimitive.Viewport className="aui-thread">
               <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
               {workflows.length ? <div className="chat-workflows">{workflows.map((workflow) => <ResearchWorkflowCard key={workflow.id} workflow={workflow} onChange={(updated) => setWorkflows((current) => current.map((item) => item.id === updated.id ? updated : item))} />)}</div> : null}
@@ -262,7 +274,7 @@ export function ChatView({ project }: { project: Gate4Project }) {
             <div className="agent-activity"><span>⌁ {project.name}</span>{activeSession?.canvasContext ? <span title={`活动科研实体：${activeSession.canvasContext.activeNodeId}`}>科研图上下文 · {activeSession.canvasContext.activeNodeId}{activeSession.canvasContext.quotedNodeIds.length ? ` · 显式引用 ${activeSession.canvasContext.quotedNodeIds.length}` : ""}</span> : <span>项目研究问题上下文</span>}{contextTrace ? <span title={`精确实体：${contextTrace.exactNodeIds.join(", ") || "无"}\nCapsule 实体：${contextTrace.capsuleNodeIds.join(", ") || "无"}\n能力：${contextTrace.activatedCapabilityIds.join(", ") || "无"}\nSkill：${contextTrace.activatedSkillNames.join(", ") || "无"}`}>{contextTrace.exactNodeIds.length} 精确实体 · {contextTrace.capsuleNodeIds.length} 胶囊 · {contextTrace.activatedSkillNames.length} Skill · {contextTrace.cache === "hit" ? "组装缓存" : "新投影"}</span> : null}<span>{tools.length ? `${tools.filter((item) => item.status === "complete").length}/${tools.length} 个工具完成` : "按需工具未激活"}</span><span>{running ? "Pi 正在执行" : "Pi 已就绪"}</span></div>
             {contextTrace?.degradations.length ? <div className="chat-context-notice">{contextTrace.degradations.map((item) => <span key={item}>{item}</span>)}</div> : null}
             {tools.length ? <div className="chat-tool-trace">{tools.map((tool) => <span className={tool.status} key={tool.callId}>{tool.status === "complete" ? "✓" : tool.status === "failed" ? "×" : "↻"} {tool.name}</span>)}</div> : null}
-            {lastAssistant ? <div className="chat-save-actions"><span>确认后沉淀</span><button onClick={() => void persistResponse("task")}>保存为任务</button><button onClick={() => void persistResponse("wiki")}>写入 Wiki</button>{saveStatus ? <small>{saveStatus}</small> : null}</div> : null}
+            {lastAssistant ? <div className="chat-save-actions"><span>以可审阅草稿沉淀</span><button onClick={() => setPendingSaveTarget("task")}>保存为任务</button><button onClick={() => setPendingSaveTarget("wiki")}>写入 Wiki</button>{saveStatus ? <small>{saveStatus}</small> : null}</div> : null}
             <ComposerPrimitive.Root className="chat-composer">
             {pendingImages.length ? <div className="native-attachment-tray">{pendingImages.map((image) => <div key={image.localId}><img src={image.previewUrl} alt="" /><span><b>{image.name}</b><small>{formatAttachmentSize(image.size)} · 原生图像</small></span><button type="button" aria-label={`移除 ${image.name}`} onClick={() => setPendingImages((current) => current.filter((item) => item.localId !== image.localId))}>×</button></div>)}</div> : null}
             {attachmentError ? <div className="native-attachment-error">{attachmentError}</div> : null}
@@ -275,26 +287,9 @@ export function ChatView({ project }: { project: Gate4Project }) {
             <p className="adapter-note">回答可能有误，请核对数据来源与科研结论</p>
           </>}
         </ThreadPrimitive.Root>
-        {artifactOpen && !artifactExpanded ? <div className="split-resizer" role="separator" aria-label="调整 Artifact 面板宽度" aria-orientation="vertical" onPointerDown={beginResize}><i /></div> : null}
-        {artifactOpen ? <aside className="artifact-panel">
-          <div className="artifact-panel-head"><div><b>mhw_mld_anomaly.png</b><small>图表 · v2</small></div><div className="artifact-window-actions"><button aria-label="下载产物">↓</button><button aria-label={artifactExpanded ? "还原产物面板" : "全屏查看产物"} onClick={() => setArtifactExpanded((value) => !value)}>{artifactExpanded ? "⊙" : "↗"}</button><button aria-label="关闭产物面板" onClick={() => { setArtifactOpen(false); setArtifactExpanded(false); }}>×</button></div></div>
-          <div className="artifact-tabs"><button className="active">预览</button><button>代码</button><button>运行日志</button><button>审阅</button></div>
-          <div className="artifact-preview">
-            <div className="figure-title"><b>西北太平洋混合层深度异常</b><small>Argo · 2023-06—2023-09</small></div>
-            <svg viewBox="0 0 560 330" role="img" aria-label="混合层深度异常示意图">
-              <defs><linearGradient id="ocean-map" x1="0" x2="1"><stop stopColor="#dff8fb"/><stop offset=".5" stopColor="#8dddf1"/><stop offset="1" stopColor="#899af4"/></linearGradient></defs>
-              <rect x="54" y="34" width="472" height="238" rx="2" fill="#f8f7f3" stroke="#d8d6cf"/>
-              {[0,1,2,3,4].map((i) => <line key={`h-${i}`} x1="54" y1={62+i*46} x2="526" y2={62+i*46} stroke="#e8e5df"/>)}
-              {[0,1,2,3,4,5].map((i) => <line key={`v-${i}`} x1={92+i*78} y1="34" x2={92+i*78} y2="272" stroke="#ece9e3"/>)}
-              <path d="M55 222 C100 206 128 152 168 164 S230 224 271 183 333 99 382 126 452 190 526 105 L526 272 55 272Z" fill="url(#ocean-map)" opacity=".88"/>
-              <path d="M55 222 C100 206 128 152 168 164 S230 224 271 183 333 99 382 126 452 190 526 105" fill="none" stroke="#3f74d8" strokeWidth="3"/>
-              <line x1="54" y1="190" x2="526" y2="190" stroke="#2f7f85" strokeDasharray="6 5"/>
-              <text x="54" y="300" fill="#72706b" fontSize="12">140°E</text><text x="480" y="300" fill="#72706b" fontSize="12">170°W</text>
-            </svg>
-            <div className="artifact-caption"><span>图 1</span><p>热浪核心区的混合层显著变浅，与上层海洋层结增强的机制假设一致。阴影表示 95% 置信区间。</p></div>
-          </div>
-          <div className="review-note"><b>审阅通过</b><span>数据来源、变量与时间范围可追溯</span></div>
-        </aside> : null}
+        {artifactOpen && artifactDocked ? <div className="split-resizer" role="separator" aria-label="调整 Artifact 面板宽度" aria-orientation="vertical" onPointerDown={beginResize}><i /></div> : null}
+        {artifactOpen ? <ArtifactViewer projectId={project.id} workflows={workflows} expanded={artifactExpanded} onToggleExpanded={() => setArtifactExpanded((value) => !value)} onClose={() => { setArtifactOpen(false); setArtifactExpanded(false); }} /> : null}
+        {pendingSaveTarget && lastAssistant ? <div className="chat-publish-dialog" role="dialog" aria-modal="true" aria-label="确认沉淀 Agent 回答"><div><header><div><small>{pendingSaveTarget === "wiki" ? "WIKI DRAFT" : "PROJECT TASK DRAFT"}</small><h2>确认写入内容</h2></div><button aria-label="关闭" onClick={() => setPendingSaveTarget(undefined)}>×</button></header><p className="chat-publish-warning">模型回答不是证据。请先确认正文、当前科研图上下文和来源 Run，再创建正式记录。</p><div className="chat-publish-preview"><pre>{lastAssistant.text}</pre></div><dl><div><dt>目标</dt><dd>{pendingSaveTarget === "wiki" ? "新 Wiki 页面与不可变首版" : "项目任务"}</dd></div><div><dt>项目</dt><dd>{project.name}</dd></div><div><dt>Agent Run</dt><dd>{lastAssistant.runId ?? "无可用 Run ID"}</dd></div><div><dt>科研上下文</dt><dd>{activeSession?.canvasContext?.activeNodeId ?? "项目研究问题"}</dd></div></dl><footer><button onClick={() => setPendingSaveTarget(undefined)}>取消</button><button className="primary" onClick={() => void persistResponse(pendingSaveTarget)}>确认写入</button></footer></div></div> : null}
       </div>
     </AssistantRuntimeProvider>
   );

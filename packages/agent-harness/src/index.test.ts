@@ -53,6 +53,24 @@ async function waitForStatus(harness: ResearchAgentHarness, runId: string, statu
 }
 
 describe("ResearchAgentHarness durable vertical slice", () => {
+  it("persists parent-child delegation lineage without merging child session history", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xiling-agent-delegation-"));
+    const store = new SqliteAgentSessionStore(join(root, "agent-center.sqlite"));
+    const harness = new ResearchAgentHarness(store, fixtureFactory());
+    const parentSession = harness.createSession({ projectId: "ocean-project" });
+    const parentRun = harness.startTurn({ sessionId: parentSession.id, prompt: "比较三个假说", clientCommandId: "parent" }).run;
+    await waitForStatus(harness, parentRun.id, "completed");
+    const childSession = harness.createSession({ projectId: "ocean-project" });
+    const delegation = store.createDelegation({ id: "delegation-1", projectId: "ocean-project", rootRunId: parentRun.id, parentRunId: parentRun.id, childSessionId: childSession.id, roleId: "skeptical-reviewer", objective: "独立盲审", isolation: "blind", contextManifestHash: "a".repeat(64), contextManifest: { entityIds: ["claim-1"] }, budget: { maxToolCalls: 4 } });
+    const childRun = harness.startTurn({ sessionId: childSession.id, prompt: "独立盲审", clientCommandId: "child", context: { multiAgent: { delegationId: delegation.id } } }).run;
+    store.updateDelegation(delegation.id, { status: "running", childRunId: childRun.id });
+    await waitForStatus(harness, childRun.id, "completed");
+    store.updateDelegation(delegation.id, { status: "completed", childRunId: childRun.id, result: { summary: "审查完成" } });
+
+    expect(store.listRunDelegations(parentRun.id)).toMatchObject([{ childSessionId: childSession.id, childRunId: childRun.id, isolation: "blind", status: "completed" }]);
+    expect(store.loadCompactionAwareHistory(childSession.id, "none").map(({ text }) => text)).not.toContain("比较三个假说");
+    store.close();
+  });
   it("persists native image bytes and descriptors across restart without putting bytes in transcript history", async () => {
     const root = await mkdtemp(join(tmpdir(), "xiling-agent-image-"));
     const path = join(root, "agent-center.sqlite");

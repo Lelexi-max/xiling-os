@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { AgentInputAttachment, AgentStreamEvent } from "@xiling/contracts";
 
 export const AGENT_SESSION_FORMAT_VERSION = 1;
-export const AGENT_STORE_SCHEMA_VERSION = 4;
+export const AGENT_STORE_SCHEMA_VERSION = 5;
 
 export type AgentSessionStatus = "active" | "archived";
 export type AgentRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "suspended";
@@ -129,6 +129,29 @@ export interface AgentRunSnapshot {
   compactions: AgentCompactionRecord[];
   lastSequence: number;
   recovery: { resumable: boolean; strategy?: "restart-interrupted-turn" };
+}
+
+export type AgentDelegationStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "suspended";
+
+export interface AgentDelegationRecord {
+  id: string;
+  projectId: string;
+  rootRunId: string;
+  parentRunId: string;
+  childSessionId: string;
+  childRunId?: string;
+  roleId: string;
+  objective: string;
+  isolation: "scoped" | "blind" | "execution";
+  contextManifestHash: string;
+  contextManifest: unknown;
+  budget: unknown;
+  status: AgentDelegationStatus;
+  result?: unknown;
+  error?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
 }
 
 export interface RuntimeUsageInput extends AgentUsageTotals {
@@ -270,6 +293,34 @@ const migrations = [{
     );
     CREATE INDEX IF NOT EXISTS agent_input_attachments_project ON agent_input_attachments(project_id, created_at);
   `,
+}, {
+  version: 5,
+  sql: `
+    CREATE TABLE IF NOT EXISTS agent_delegations (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      root_run_id TEXT NOT NULL REFERENCES agent_runs(id),
+      parent_run_id TEXT NOT NULL REFERENCES agent_runs(id),
+      child_session_id TEXT NOT NULL REFERENCES agent_sessions(id),
+      child_run_id TEXT REFERENCES agent_runs(id),
+      role_id TEXT NOT NULL,
+      objective TEXT NOT NULL,
+      isolation TEXT NOT NULL,
+      context_manifest_hash TEXT NOT NULL,
+      context_manifest_json TEXT NOT NULL,
+      budget_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      result_json TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS agent_delegations_project_created ON agent_delegations(project_id, created_at);
+    CREATE INDEX IF NOT EXISTS agent_delegations_parent_run ON agent_delegations(parent_run_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS agent_delegations_child_session ON agent_delegations(child_session_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS agent_delegations_child_run ON agent_delegations(child_run_id) WHERE child_run_id IS NOT NULL;
+  `,
 }];
 
 export class SqliteAgentSessionStore {
@@ -349,6 +400,67 @@ export class SqliteAgentSessionStore {
   listSessionRuns(sessionId: string): AgentRunRecord[] {
     const rows = this.sqlite.prepare("SELECT id FROM agent_runs WHERE session_id = ? ORDER BY started_at").all(sessionId) as Array<{ id: string }>;
     return rows.map((row) => this.getRun(row.id)).filter((run): run is AgentRunRecord => Boolean(run));
+  }
+
+  createDelegation(input: Omit<AgentDelegationRecord, "createdAt" | "status"> & { status?: AgentDelegationStatus }): AgentDelegationRecord {
+    const parent = this.getRun(input.parentRunId);
+    const root = this.getRun(input.rootRunId);
+    const child = this.getSession(input.childSessionId);
+    const parentSession = parent ? this.getSession(parent.sessionId) : undefined;
+    if (!parent || !root || !child || !parentSession) throw new Error("Delegation lineage references missing Agent records");
+    if (parentSession.projectId !== input.projectId || child.projectId !== input.projectId) throw new Error("Delegation project mismatch");
+    const record: AgentDelegationRecord = { ...input, status: input.status ?? "queued", createdAt: isoNow() };
+    this.sqlite.prepare(`INSERT INTO agent_delegations (
+      id, project_id, root_run_id, parent_run_id, child_session_id, child_run_id, role_id, objective,
+      isolation, context_manifest_hash, context_manifest_json, budget_json, status, result_json, error,
+      created_at, started_at, finished_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(record.id, record.projectId, record.rootRunId, record.parentRunId, record.childSessionId, record.childRunId ?? null,
+        record.roleId, record.objective, record.isolation, record.contextManifestHash, JSON.stringify(record.contextManifest),
+        JSON.stringify(record.budget), record.status, record.result === undefined ? null : JSON.stringify(record.result),
+        record.error ?? null, record.createdAt, record.startedAt ?? null, record.finishedAt ?? null);
+    return record;
+  }
+
+  updateDelegation(id: string, input: { status: AgentDelegationStatus; childRunId?: string; result?: unknown; error?: string }): AgentDelegationRecord {
+    const existing = this.getDelegation(id);
+    if (!existing) throw new Error("Agent delegation not found");
+    const timestamp = isoNow();
+    const terminal = ["completed", "failed", "cancelled"].includes(input.status);
+    this.sqlite.prepare(`UPDATE agent_delegations SET status = ?, child_run_id = COALESCE(?, child_run_id),
+      result_json = ?, error = ?, started_at = COALESCE(started_at, ?), finished_at = ? WHERE id = ?`)
+      .run(input.status, input.childRunId ?? null, input.result === undefined ? null : JSON.stringify(input.result), input.error ?? null,
+        input.status === "running" || terminal ? timestamp : null, terminal ? timestamp : null, id);
+    return this.getDelegation(id)!;
+  }
+
+  getDelegation(id: string): AgentDelegationRecord | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM agent_delegations WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return row ? this.mapDelegation(row) : undefined;
+  }
+
+  listProjectDelegations(projectId: string): AgentDelegationRecord[] {
+    const rows = this.sqlite.prepare("SELECT * FROM agent_delegations WHERE project_id = ? ORDER BY created_at").all(projectId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapDelegation(row));
+  }
+
+  listRunDelegations(parentRunId: string): AgentDelegationRecord[] {
+    const rows = this.sqlite.prepare("SELECT * FROM agent_delegations WHERE parent_run_id = ? ORDER BY created_at").all(parentRunId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapDelegation(row));
+  }
+
+  private mapDelegation(row: Record<string, unknown>): AgentDelegationRecord {
+    return {
+      id: row.id as string, projectId: row.project_id as string, rootRunId: row.root_run_id as string,
+      parentRunId: row.parent_run_id as string, childSessionId: row.child_session_id as string,
+      ...(row.child_run_id ? { childRunId: row.child_run_id as string } : {}), roleId: row.role_id as string,
+      objective: row.objective as string, isolation: row.isolation as AgentDelegationRecord["isolation"],
+      contextManifestHash: row.context_manifest_hash as string, contextManifest: JSON.parse(row.context_manifest_json as string) as unknown,
+      budget: JSON.parse(row.budget_json as string) as unknown, status: row.status as AgentDelegationStatus,
+      ...(row.result_json ? { result: JSON.parse(row.result_json as string) as unknown } : {}),
+      ...(row.error ? { error: row.error as string } : {}), createdAt: row.created_at as string,
+      ...(row.started_at ? { startedAt: row.started_at as string } : {}), ...(row.finished_at ? { finishedAt: row.finished_at as string } : {}),
+    };
   }
 
   getRunAttachments(runId: string): AgentInputAttachment[] {
@@ -538,6 +650,7 @@ export class SqliteAgentSessionStore {
         this.sqlite.prepare("UPDATE agent_sessions SET writer_run_id = NULL, writer_expires_at = NULL, updated_at = ? WHERE id = ?").run(timestamp, run.session_id);
         this.appendEvent(run.session_id, run.id, "run.suspended", { reason: "server_restart", resumable: true });
       }
+      this.sqlite.prepare("UPDATE agent_delegations SET status = 'suspended', error = COALESCE(error, ?), finished_at = NULL WHERE status IN ('queued', 'running')").run("server_restarted_before_delegation_completed");
       return runs.length;
     });
   }
@@ -710,6 +823,13 @@ export class ResearchAgentHarness {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let modelOperation: AgentOperationRecord | undefined;
     const toolOperations = new Map<string, AgentOperationRecord>();
+    const delegatedBudget = (run.context as { multiAgent?: { budget?: { maxDurationMs?: unknown; maxToolCalls?: unknown; maxCost?: unknown } } } | undefined)?.multiAgent?.budget;
+    const positiveNumber = (value: unknown): number | undefined => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+    const runLimits = {
+      maxRunMs: Math.min(this.limits.maxRunMs, positiveNumber(delegatedBudget?.maxDurationMs) ?? this.limits.maxRunMs),
+      maxToolCalls: Math.min(this.limits.maxToolCalls, positiveNumber(delegatedBudget?.maxToolCalls) ?? this.limits.maxToolCalls),
+      maxRunCost: Math.min(this.limits.maxRunCost, positiveNumber(delegatedBudget?.maxCost) ?? this.limits.maxRunCost),
+    };
     try {
       this.store.transitionRun(run.id, "running");
       modelOperation = this.store.appendOperation(run.id, { kind: "model", status: "running", name: resumed ? "pi.prompt.resume" : "pi.prompt", request: { prompt: run.prompt, ...(run.attachments?.length ? { attachmentIds: run.attachments.map(({ id }) => id) } : {}) } });
@@ -720,8 +840,8 @@ export class ResearchAgentHarness {
           this.store.appendUsage(run.sessionId, run.id, { ...usage, ...(modelOperation ? { operationId: modelOperation.id } : {}) });
           this.emit(run, "usage.recorded", usage);
           const current = this.active.get(run.id);
-          if (current && totalCost > this.limits.maxRunCost) {
-            current.guardError = `run_cost_limit_exceeded:${this.limits.maxRunCost}`;
+          if (current && totalCost > runLimits.maxRunCost) {
+            current.guardError = `run_cost_limit_exceeded:${runLimits.maxRunCost}`;
             current.runtime.abort();
           }
         },
@@ -731,7 +851,7 @@ export class ResearchAgentHarness {
       timer = setTimeout(() => {
         state.guardError = `run_duration_limit_exceeded:${this.limits.maxRunMs}`;
         runtime.abort();
-      }, this.limits.maxRunMs);
+      }, runLimits.maxRunMs);
       runtime.subscribe(async (event) => {
         if (event.type === "message.delta") answer += event.delta;
         if (event.type === "tool.started") {
@@ -742,8 +862,8 @@ export class ResearchAgentHarness {
           const operation = this.store.appendOperation(run.id, { kind: "tool", status: "running", name: event.toolName, callId: event.callId, ...(event.arguments === undefined ? {} : { request: event.arguments }) });
           toolOperations.set(event.callId, operation);
           this.store.appendEntry(run.sessionId, run.id, { kind: "tool-call", role: "tool", text: event.toolName, metadata: { callId: event.callId, operationId: operation.id } });
-          if (toolCallCount > this.limits.maxToolCalls || repeats > this.limits.maxRepeatedToolSignature) {
-            state.guardError = toolCallCount > this.limits.maxToolCalls ? `tool_call_limit_exceeded:${this.limits.maxToolCalls}` : `repeated_tool_signature:${event.toolName}`;
+          if (toolCallCount > runLimits.maxToolCalls || repeats > this.limits.maxRepeatedToolSignature) {
+            state.guardError = toolCallCount > runLimits.maxToolCalls ? `tool_call_limit_exceeded:${runLimits.maxToolCalls}` : `repeated_tool_signature:${event.toolName}`;
             runtime.abort();
           }
         }

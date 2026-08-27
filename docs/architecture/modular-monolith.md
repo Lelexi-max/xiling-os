@@ -9,6 +9,7 @@ flowchart LR
   WEB["apps/web\nReact views"] --> API["apps/server\ncomposition root"]
   API --> AGENT["Agent / context orchestration"]
   AGENT --> HARNESS["Agent Harness / durable run store"]
+  AGENT --> MULTI["Multi-Agent Orchestrator / bounded child sessions"]
   API --> WORKSPACE["Workspace routes"]
   API --> LITERATURE["Literature routes"]
   API --> LAYOUT["Scientific Canvas layout store"]
@@ -29,9 +30,10 @@ flowchart LR
 ## 包依赖方向
 
 - `contracts` 是无运行时依赖的领域类型核心。
+- `science-domains` 只依赖 `contracts`，保存无执行权限的领域 Manifest；Server 组合根负责显式工具 adapter。
 - `api-contracts` 依赖 `contracts`，提供前后端共用的 Zod 运行时校验。
-- `context`、`credentials`、`literature`、`connectors`、`knowledge`、`agent-harness`、`research-graph` 和 `pi-runtime` 只依赖允许的下层包。`agent-harness` 不依赖 Pi，由 Server 在组合根注入 `PiRuntimeAdapter`。
-- `research-graph` 只依赖公共 contracts；LadybugDB 被封装在 `ResearchGraphStore` 后。`research` 是待删除的 Gate 3 旧聚合，不做数据迁移或继续扩展。
+- `context`、`credentials`、`literature`、`connectors`、`knowledge`、`agent-harness`、`multi-agent`、`research-graph` 和 `pi-runtime` 只依赖允许的下层包。`agent-harness` 与 `multi-agent` 不依赖 Pi，由 Server 在组合根注入 `PiRuntimeAdapter` 和子任务执行器。
+- `research-graph` 只依赖公共 contracts；LadybugDB 被封装在 `ResearchGraphStore` 后。旧 Gate 3 聚合包已删除。
 - `apps/server` 是组合根；允许装配所有模块，但业务模块不得反向导入应用层。
 - `apps/web` 通过 HTTP/SSE 契约访问服务端，不导入服务端实现。
 - 所有 `@earendil-works/pi-*` 依赖只能出现在 `pi-runtime`；Server 依赖 `PiCompatibilityPort` 和汐灵运行类型。
@@ -48,8 +50,7 @@ flowchart LR
 | `workflows` | 项目科研闭环状态机 HTTP API；SQLite 状态与 outbox 同事务 | `ProjectWorkflowService`、`SqliteProjectWorkflowRepository` |
 | `research-graph` | Claim、EvidenceAssertion、计算溯源、Artifact 生命周期与受界限图投影 | `ResearchGraphStore` |
 | `settings` | 凭据状态、模型路由、自定义 Provider | `CredentialStore`、`ModelRuntimeStore` |
-| `agent-center` | Chat command、snapshot、event、source resolution 与 Agent Execution Graph 主 API | `ResearchAgentHarness`、`SqliteAgentSessionStore`、`HarnessRuntimeFactory` |
-| `legacy-gate3` | 开发期待删除的旧 Gate 3 路由 | 不迁移数据，不再维护兼容 |
+| `agent-center` | Chat command、snapshot、event、source resolution、多智能体委派与 Agent Execution Graph 主 API | `ResearchAgentHarness`、`MultiAgentOrchestrator`、`SqliteAgentSessionStore`、`HarnessRuntimeFactory` |
 
 RG-2 已删除旧的“Workflow 完成后写入实验、Wiki、画布”文件级 settlement。新的运行事实先与 Workflow 状态同事务落入 outbox，再由幂等 projector 写入 Research Graph；Wiki 只保存正文和版本引用。
 

@@ -65,15 +65,18 @@ importers:
       '@xiling/literature':
         specifier: workspace:*
         version: link:../../packages/literature
+      '@xiling/multi-agent':
+        specifier: workspace:*
+        version: link:../../packages/multi-agent
       '@xiling/pi-runtime':
         specifier: workspace:*
         version: link:../../packages/pi-runtime
-      '@xiling/research':
-        specifier: workspace:*
-        version: link:../../packages/research
       '@xiling/research-graph':
         specifier: workspace:*
         version: link:../../packages/research-graph
+      '@xiling/science-domains':
+        specifier: workspace:*
+        version: link:../../packages/science-domains
       fastify:
         specifier: 5.12.1
         version: 5.12.1
@@ -174,6 +177,12 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/multi-agent:
+    dependencies:
+      '@xiling/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/pi-runtime:
     dependencies:
       '@earendil-works/pi-agent-core':
@@ -204,17 +213,17 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
-  packages/research:
-    dependencies:
-      '@xiling/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-
   packages/research-graph:
     dependencies:
       '@ladybugdb/core':
         specifier: 0.19.1
         version: 0.19.1
+      '@xiling/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
+  packages/science-domains:
+    dependencies:
       '@xiling/contracts':
         specifier: workspace:*
         version: link:../contracts

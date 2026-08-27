@@ -31,7 +31,8 @@ Research Graph 可以有环，因此不会按对话祖先递归整图。其他�
 
 ## 2. 增量 Context Capsule
 
-- 当前每个画布节点维护一个内容寻址 Capsule；新增或修改节点只更新该节点派生缓存。
+- 当前每个科研实体维护一个内容寻址 Capsule；新增或修改实体只更新该实体派生缓存。用户选择后，`SourceContentResolver` 才按 source kind 读取精确 Evidence 摘录、Provider Paper 摘要、Wiki Revision、耐久 Agent Entry/Run、Workflow 或受管文本 Artifact。
+- 组装结果逐项标记来源等级和 locator；无精确来源时必须写明“结构化摘要（非原文）”或“阅读解释（非原文）”。
 - 分支祖先按 DAG 计算，较早节点使用各自 Capsule，近期节点与 Quote 使用原文。系统不再生成一个未被消费的 branch Capsule。
 - 胶囊保存目标、约束、关键决策、未解决问题、证据 URI 和覆盖节点哈希。
 - 原节点编辑后，依赖其 `sourceHash` 的胶囊失效并延迟重建。
@@ -90,6 +91,9 @@ Research Graph 可以有环，因此不会按对话祖先递归整图。其他�
 - Executor 每个步骤只读取对应 TaskPacket，并将大结果写入 Artifact。
 - Reviewer 读取声明、证据包、计算摘要和 provenance，不复制 Planner/Executor 全部对话。
 - 阶段间通过结构化 Handoff 传递，而非自然语言全文转发。
+- 多智能体委派使用内容寻址 `ContextManifest`：项目简报版本、显式科研实体、来源 URI 与 projection hash。每个子任务创建独立 Agent Session，不复制父会话全文或兄弟结果。
+- `blind` Reviewer 可读取待审 Claim/Run 与证据，但不读取主 Agent 的偏好性解释；子 Agent 只加载角色 capability allowlist 命中的工具与 Skill，且不获得委派工具。
+- 子结果的完整 transcript 留在 Agent Store，父 Agent 默认只接收摘要、来源、Artifact、局限与 usage；大结果继续写 Artifact。
 
 ## 8. 自适应组装与降级
 

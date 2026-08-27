@@ -12,7 +12,7 @@
 
 1. **构建边界**：workspace 包在运行时只暴露 `dist`；开发先构建再并行 watch；增加依赖方向门禁。
 2. **共享协议**：建立 `api-contracts`，前后端共享 Zod 契约；统一 JSON 客户端与 SSE 解码。
-3. **服务端模块化**：按 workspace、literature、research-graph、connectors、workflows、settings 与 legacy-gate3 注册路由；旧 Canvas 模块已删除，`app.ts` 只保留装配和跨模块 Agent/投影编排。
+3. **服务端模块化**：按 workspace、literature、research-graph、connectors、workflows、settings、MCP 与 agent-center 注册路由；旧 Canvas 与 Gate 3 产品路由/聚合包已删除，`app.ts` 只保留装配和跨模块 Agent/投影编排。
 4. **持久化可靠性**：Knowledge 数据库使用版本迁移和窄 ports；Scientific Canvas 布局使用独立 SQLite 与 revision，科研事实使用 Research Graph。
 5. **上下文机制纠偏**：使用用户选择的 Research Graph 活动实体、有限两跳邻域、显式引用、Capsule、按需 Skill/tool、组装缓存和 TokenLedger；不把循环科研图当成对话树，也不引入正常任务固定 token 上限。
 6. **回归门禁**：新增 API 契约、SSE 分片、迁移版本、画布并发与架构依赖测试；运行全量 typecheck/test/build/smoke/compliance。
@@ -20,7 +20,7 @@
 ## 对旧计划的修订
 
 - Gate 1–4 不再作为代码目录的长期架构；它们只保留为产品验收记录。
-- `Gate3ResearchService` 降为兼容层；`ProjectWorkflowService` 是新功能唯一科研闭环。
+- `Gate3ResearchService`、旧 `/api/gate3/*` 与旧 ResearchView 已删除；`ProjectWorkflowService` 是唯一科研闭环。
 - “SQLite/Drizzle”修订为“SQLite + 明确 Repository/Port 边界”。当前实际适配器使用 Node SQLite；在没有迁移收益前不强行引入第二套 ORM。
 - 旧 Canvas 项目图文档已经删除；Scientific Canvas 是 Research Graph 的表现投影，布局保存不能伪装成科研事实版本史。
 - 固定 token 数字只保留为安全和模型窗口保护；优化目标是上下文拓扑、去重、按需加载与可观测性。

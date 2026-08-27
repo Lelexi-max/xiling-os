@@ -733,7 +733,7 @@ a:focus-visible,
 .settings-overview-grid { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .settings-overview-grid button { min-width: 0; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 11px; align-items: center; padding: 18px; border: 0; background: #fff; text-align: left; }
 .settings-overview-grid button:nth-child(odd) { border-right: 1px solid var(--line); }.settings-overview-grid button:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
-.settings-overview-grid button:nth-child(n+3) { border-top: 1px solid var(--line); }.settings-overview-grid button:nth-child(-n+2) { border-bottom: 0; }.settings-overview-grid button:last-child { grid-column: 1 / -1; border-right: 0; }
+.settings-overview-grid button:nth-child(n+3) { border-top: 1px solid var(--line); }.settings-overview-grid button:nth-child(-n+2) { border-bottom: 0; }.settings-overview-grid button:last-child { border-right: 0; }
 .settings-overview-grid button:hover { background: #f8fbff; }
 .settings-overview-grid button > span { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #d9e6f5; border-radius: 9px; color: #3977d8; background: #f0f6fe; font-size: 16px; }
 .settings-overview-grid button > div { min-width: 0; }.settings-overview-grid small { color: #8693a2; font-size: 7px; letter-spacing: .08em; }.settings-overview-grid h3 { margin: 3px 0 4px; color: #27384b; font-size: 11px; }.settings-overview-grid p { overflow: hidden; margin: 0; color: #7e8a98; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }.settings-overview-grid button > b { color: #9aa6b4; font-size: 17px; font-weight: 400; }
@@ -786,6 +786,21 @@ a:focus-visible,
 .mcp-editor > footer { display: flex; justify-content: flex-end; gap: 7px; margin-top: 14px; }.mcp-editor > footer button:last-child { border-color: #356fba; color: #fff; background: #3977d8; }
 
 .settings-security-page { margin-top: 23px; }.settings-security-page .security-notice { margin-top: 0; }
+.agent-role-settings { margin-top: 23px; }
+.agent-role-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 14px; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.agent-role-grid > article { min-width: 0; padding: 17px 18px 14px; background: #fff; }
+.agent-role-grid > article:nth-child(odd) { border-right: 1px solid var(--line); }
+.agent-role-grid > article:nth-child(n+3) { border-top: 1px solid var(--line); }
+.agent-role-grid header { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.agent-role-grid header > span { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid #cfe1e4; border-radius: 8px; color: #347780; background: #f3f9f9; font-size: 13px; }
+.agent-role-grid h3 { margin: 0 0 3px; color: #28394a; font-size: 15px; }.agent-role-grid code { color: #8693a0; font-size: 11px; }
+.agent-role-grid header > b { color: #4e7b80; font-size: 11px; font-weight: 600; }
+.agent-role-grid article > p { min-height: 42px; margin: 13px 0; color: #72808d; font-size: 13px; line-height: 1.6; }
+.agent-role-grid article section small { color: #929ca7; font-size: 11px; letter-spacing: .06em; }.agent-role-grid article section div { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.agent-role-grid article section span { padding: 4px 7px; border: 1px solid #dce5e8; border-radius: 5px; color: #607682; background: #fafcfc; font-size: 11px; }
+.agent-role-grid footer { margin-top: 14px; padding-top: 10px; border-top: 1px solid #edf0f2; color: #7f8c97; font-size: 11px; }.agent-role-grid footer i { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: #4d9a86; }
+.project-domain-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.project-domain-tags span { padding: 4px 8px; border: 1px solid #d8e3e7; border-radius: 5px; color: #5d7581; background: #fafcfc; font-size: 11px; }
 .security-list { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .security-list > div { padding: 15px; }.security-list > div:nth-child(odd) { border-right: 1px solid var(--line); }.security-list > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
 .security-list span { display: block; color: #8996a5; font-size: 7px; letter-spacing: .08em; }.security-list b { display: block; margin: 6px 0 4px; color: #30465e; font-size: 10px; }.security-list p { margin: 0; color: #788697; font-size: 8px; }
@@ -794,6 +809,7 @@ a:focus-visible,
   .settings-view.settings-shell { grid-template-columns: 158px minmax(0, 1fr); }
   .settings-content { padding-inline: 25px; }
   .settings-provider-page .provider-grid, .skills-grid { grid-template-columns: 1fr; }
+  .agent-role-grid { grid-template-columns: 1fr; }.agent-role-grid > article:nth-child(odd) { border-right: 0; }.agent-role-grid > article + article { border-top: 1px solid var(--line); }
   .mcp-server-list { grid-template-columns: 1fr; }.mcp-server-list > article:nth-child(odd) { border-right: 0; }.mcp-server-list > article + article { border-top: 1px solid var(--line); }
   .skill-card:nth-child(odd) { border-right: 0; }.skill-card:nth-child(-n+2) { border-bottom: 0; }.skill-card + .skill-card { border-top: 1px solid var(--line); }
 }

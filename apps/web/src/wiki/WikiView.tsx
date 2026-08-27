@@ -70,14 +70,8 @@ export function WikiView({ projectId, onNavigate }: { projectId: string; onNavig
 
   const loadOverview = async () => {
     const encoded = encodeURIComponent(projectId);
-    const [projects, items, evidence, researchGraph, workflows] = await Promise.all([
-      jsonRequest<Gate4Project[]>("/api/gate4/projects"),
-      jsonRequest<ProjectItem[]>(`/api/gate4/project-items?projectId=${encoded}`),
-      jsonRequest<EvidenceRecord[]>(`/api/gate4/evidence?projectId=${encoded}`),
-      jsonRequest<ResearchGraphProjection>(`/api/projects/${encoded}/research-graph?view=all`),
-      jsonRequest<ProjectResearchWorkflow[]>(`/api/gate4/research-workflows?projectId=${encoded}`),
-    ]);
-    setOverview({ project: projects.find((item) => item.id === projectId) ?? null, items, evidence, researchGraph, workflows });
+    const snapshot = await jsonRequest<OverviewData>(`/api/projects/${encoded}/overview`);
+    setOverview(snapshot);
   };
 
   const openOverview = () => {
@@ -309,8 +303,6 @@ function artifactHttpUrl(uri: string, projectId?: string): string | undefined {
   if (connectorRun) return `/api/gate4/connector-run-artifacts/${encodeURIComponent(connectorRun[1]!)}/${connectorRun[2]!.split("/").map(encodeURIComponent).join("/")}`;
   const workflow = /^artifact:\/\/workflow\/(workflow-[0-9a-f-]{36})\/(.+)$/.exec(uri);
   if (workflow && projectId) return `/api/gate4/workflow-artifacts/${encodeURIComponent(workflow[1]!)}/${workflow[2]!.split("/").map(encodeURIComponent).join("/")}?projectId=${encodeURIComponent(projectId)}`;
-  const gate3 = /^artifact:\/\/gate3\/([^/]+)\/(.+)$/.exec(uri);
-  if (gate3) return `/api/gate3/artifacts/${encodeURIComponent(gate3[1]!)}/${gate3[2]!.split("/").map(encodeURIComponent).join("/")}`;
   return undefined;
 }
 function artifactLabel(uri: string): string { const tail = uri.split("/").at(-1) ?? uri; try { return decodeURIComponent(tail); } catch { return tail; } }

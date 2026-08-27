@@ -17,7 +17,7 @@ function slugify(title: string): string {
 }
 
 function projectFromRow(row: typeof projects.$inferSelect): Gate4Project {
-  return { ...row, status: row.status as ProjectStatus };
+  return { ...row, domainIds: JSON.parse(row.domainIds) as string[], status: row.status as ProjectStatus };
 }
 
 function itemFromRow(row: typeof projectItems.$inferSelect): ProjectItem {
@@ -52,9 +52,9 @@ export class KnowledgeService implements KnowledgeStore {
     return row ? projectFromRow(row) : undefined;
   }
 
-  createProject(input: { name: string; description: string; researchQuestion: string }): Gate4Project {
+  createProject(input: { name: string; description: string; researchQuestion: string; domainIds: string[] }): Gate4Project {
     const timestamp = now();
-    const value: typeof projects.$inferInsert = { id: randomUUID(), ...input, status: "active", createdAt: timestamp, updatedAt: timestamp };
+    const value: typeof projects.$inferInsert = { id: randomUUID(), ...input, domainIds: JSON.stringify(input.domainIds), status: "active", createdAt: timestamp, updatedAt: timestamp };
     const project = projectFromRow(value as typeof projects.$inferSelect);
     this.transaction(() => {
       this.db.insert(projects).values(value).run();
@@ -63,11 +63,12 @@ export class KnowledgeService implements KnowledgeStore {
     return project;
   }
 
-  updateProject(id: string, patch: Partial<Pick<Gate4Project, "name" | "description" | "researchQuestion" | "status">>): Gate4Project | undefined {
+  updateProject(id: string, patch: Partial<Pick<Gate4Project, "name" | "description" | "researchQuestion" | "domainIds" | "status">>): Gate4Project | undefined {
     const timestamp = now();
     let project: Gate4Project | undefined;
     this.transaction(() => {
-      const result = this.db.update(projects).set({ ...patch, updatedAt: timestamp }).where(eq(projects.id, id)).run();
+      const { domainIds, ...plainPatch } = patch;
+      const result = this.db.update(projects).set({ ...plainPatch, ...(domainIds ? { domainIds: JSON.stringify(domainIds) } : {}), updatedAt: timestamp }).where(eq(projects.id, id)).run();
       if (!result.changes) return;
       const row = this.db.select().from(projects).where(eq(projects.id, id)).get();
       if (!row) return;
@@ -281,10 +282,10 @@ export class KnowledgeService implements KnowledgeStore {
     return this.db.update(wikiPages).set({ archived: true, updatedAt: now() }).where(eq(wikiPages.id, id)).run().changes > 0;
   }
 
-  saveEvidence(projectId: string, paper: PaperRecord, note = "", stance: EvidenceRecord["stance"] = "insufficient", confidence = 0.5): EvidenceRecord {
-    const existing = this.db.select().from(evidence).where(and(eq(evidence.projectId, projectId), eq(evidence.paperId, paper.id))).get();
+  saveEvidence(projectId: string, paper: PaperRecord, note = "", stance: EvidenceRecord["stance"] = "insufficient", confidence = 0.5, source: Pick<EvidenceRecord, "sourceQuote" | "sourceLocator" | "limitations" | "claimRevisionId"> = { sourceQuote: "", limitations: "" }): EvidenceRecord {
+    const existing = this.db.select().from(evidence).where(and(eq(evidence.projectId, projectId), eq(evidence.paperId, paper.id))).all().find((row) => row.note === note && row.stance === stance && row.sourceQuote === source.sourceQuote && row.claimRevisionId === (source.claimRevisionId ?? null));
     if (existing) return this.evidenceFromRow(existing);
-    const value: typeof evidence.$inferInsert = { id: randomUUID(), projectId, paperId: paper.id, paperJson: JSON.stringify(paper), note, stance, confidence: Math.max(0, Math.min(confidence, 1)), createdAt: now() };
+    const value: typeof evidence.$inferInsert = { id: randomUUID(), projectId, paperId: paper.id, paperJson: JSON.stringify(paper), note, stance, confidence: Math.max(0, Math.min(confidence, 1)), sourceQuote: source.sourceQuote, sourceLocator: source.sourceLocator, limitations: source.limitations, claimRevisionId: source.claimRevisionId, createdAt: now() };
     const record = this.evidenceFromRow(value as typeof evidence.$inferSelect);
     this.transaction(() => {
       this.db.insert(evidence).values(value).run();
@@ -298,7 +299,7 @@ export class KnowledgeService implements KnowledgeStore {
   }
 
   private evidenceFromRow(row: typeof evidence.$inferSelect): EvidenceRecord {
-    return { id: row.id, projectId: row.projectId, paper: JSON.parse(row.paperJson) as PaperRecord, note: row.note, stance: row.stance as EvidenceRecord["stance"], confidence: row.confidence, createdAt: row.createdAt };
+    return { id: row.id, projectId: row.projectId, paper: JSON.parse(row.paperJson) as PaperRecord, note: row.note, stance: row.stance as EvidenceRecord["stance"], confidence: row.confidence, sourceQuote: row.sourceQuote, ...(row.sourceLocator ? { sourceLocator: row.sourceLocator } : {}), limitations: row.limitations, ...(row.claimRevisionId ? { claimRevisionId: row.claimRevisionId } : {}), createdAt: row.createdAt };
   }
 
   listProjectionOutbox(limit = 100): ResearchProjectionOutboxRecord[] {
@@ -346,9 +347,9 @@ export class KnowledgeService implements KnowledgeStore {
   private seed(): void {
     if (this.db.select().from(projects).get()) return;
     const timestamp = now();
-    const project: Gate4Project = { id: DEFAULT_PROJECT_ID, name: "西北太平洋海洋热浪", description: "机制与 Argo 观测验证", researchQuestion: "上层海洋层结是否放大了 2023 年海洋热浪？", status: "active", createdAt: timestamp, updatedAt: timestamp };
+    const project: Gate4Project = { id: DEFAULT_PROJECT_ID, name: "西北太平洋海洋热浪", description: "机制与 Argo 观测验证", researchQuestion: "上层海洋层结是否放大了 2023 年海洋热浪？", domainIds: ["general-science", "ocean-climate"], status: "active", createdAt: timestamp, updatedAt: timestamp };
     this.transaction(() => {
-      this.db.insert(projects).values(project).run();
+      this.db.insert(projects).values({ ...project, domainIds: JSON.stringify(project.domainIds) }).run();
       this.enqueueProjection(project.id, project.id, "knowledge.project.upserted", project, timestamp);
     });
     this.createItem(DEFAULT_PROJECT_ID, { kind: "milestone", title: "完成物理海洋科研闭环", notes: "数据切片、容器计算、Reviewer 与复现" });

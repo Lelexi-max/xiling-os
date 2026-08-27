@@ -1,10 +1,9 @@
 import { execFile } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import type { DatasetSlicePlan, ProjectResearchWorkflow, ResourceUri, ReviewerReport } from "@xiling/contracts";
-import type { ResearchRunner } from "@xiling/research";
+import type { ProjectResearchWorkflow, ResourceUri, ReviewerReport } from "@xiling/contracts";
 import type { ProjectAnalysisRunner } from "./project-workflow.js";
 
 const executeFile = promisify(execFile);
@@ -21,51 +20,6 @@ function isSafeArtifactPath(path: string): boolean {
 
 async function sha256(path: string): Promise<string> {
   return createHash("sha256").update(await readFile(path)).digest("hex");
-}
-
-export class DockerArgoResearchRunner implements ResearchRunner {
-  constructor(
-    private readonly runsRoot: string,
-    private readonly image = "xiling-runner:gate3",
-  ) {}
-
-  async execute(plan: DatasetSlicePlan, signal?: AbortSignal) {
-    const runId = randomUUID();
-    const runRoot = resolve(this.runsRoot, runId);
-    await mkdir(runRoot, { recursive: true });
-    await writeFile(join(runRoot, "plan.json"), `${JSON.stringify(plan, null, 2)}\n`, "utf8");
-
-    const created = await executeFile("docker", [
-      "create", "--network", "none", this.image, "python", "run_gate3.py",
-      "--plan", "/workspace/plan.json", "--workspace", "/workspace",
-    ], { signal, timeout: 15_000, maxBuffer: 1024 * 1024 });
-    const containerId = created.stdout.trim();
-    if (!containerId) throw new Error("Docker did not return a container id");
-
-    try {
-      await executeFile("docker", ["cp", join(runRoot, "plan.json"), `${containerId}:/workspace/plan.json`], { signal, timeout: 15_000 });
-      await executeFile("docker", ["start", "--attach", containerId], { signal, timeout: 60_000, maxBuffer: 1024 * 1024 });
-      await executeFile("docker", ["cp", `${containerId}:/workspace/.`, runRoot], { signal, timeout: 15_000 });
-    } finally {
-      await executeFile("docker", ["rm", "--force", containerId], { timeout: 15_000 }).catch(() => undefined);
-    }
-
-    const result = JSON.parse(await readFile(join(runRoot, "result.json"), "utf8")) as RunnerResult;
-    if (!Array.isArray(result.outputs) || result.outputs.length === 0 || !result.outputs.every((output) => isSafeArtifactPath(output.path) && /^[a-f0-9]{64}$/.test(output.sha256))) {
-      throw new Error("Runner returned an invalid artifact manifest");
-    }
-    for (const output of result.outputs) {
-      const actualHash = await sha256(resolve(runRoot, "artifacts", output.path));
-      if (actualHash !== output.sha256) throw new Error(`Artifact hash mismatch: ${output.path}`);
-    }
-    if (!Array.isArray(result.review?.checks) || result.review.checks.length === 0) throw new Error("Runner returned no reviewer checks");
-    await readFile(resolve(runRoot, "artifacts", "ro-crate", "ro-crate-metadata.json"));
-    const artifactUris = [
-      ...result.outputs.map((output) => `artifact://gate3/${runId}/${output.path}` as ResourceUri),
-      `artifact://gate3/${runId}/ro-crate/ro-crate-metadata.json` as ResourceUri,
-    ];
-    return { artifactUris, checks: result.review.checks };
-  }
 }
 
 export class DockerProjectAnalysisRunner implements ProjectAnalysisRunner {

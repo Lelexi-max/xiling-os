@@ -77,7 +77,7 @@ export function knowledgeRecordToChangeSet(record: ResearchProjectionOutboxRecor
     title: evidence.paper.title,
     summary: `${evidence.paper.authors.join(", ")} · ${evidence.paper.year}`,
     ...(evidence.paper.url ? { sourceLocator: evidence.paper.url } : {}),
-    properties: { paperId: evidence.paper.id, year: evidence.paper.year, authors: evidence.paper.authors, citationCount: evidence.paper.citationCount, provider: evidence.paper.source },
+    properties: { paperId: evidence.paper.id, year: evidence.paper.year, authors: evidence.paper.authors, citationCount: evidence.paper.citationCount, provider: evidence.paper.source, abstract: evidence.paper.abstract },
     createdAt: evidence.createdAt,
     updatedAt: evidence.createdAt,
   });
@@ -85,9 +85,9 @@ export function knowledgeRecordToChangeSet(record: ResearchProjectionOutboxRecor
     id: `source-fragment:${evidence.id}`,
     kind: "SourceFragment",
     title: `证据摘录 · ${evidence.paper.title}`,
-    summary: compact(evidence.note || "已固定到项目证据库，尚未添加阅读标注。"),
-    ...(evidence.paper.url ? { sourceLocator: evidence.paper.url } : {}),
-    properties: { evidenceRecordId: evidence.id, note: evidence.note },
+    summary: compact(evidence.sourceQuote || evidence.note || "已固定到项目证据库，尚未添加阅读标注。"),
+    ...(evidence.sourceLocator || evidence.paper.url ? { sourceLocator: evidence.sourceLocator ?? evidence.paper.url } : {}),
+    properties: { evidenceRecordId: evidence.id, note: evidence.note, sourceQuote: evidence.sourceQuote, limitations: evidence.limitations },
     createdAt: evidence.createdAt,
     updatedAt: evidence.createdAt,
   });
@@ -98,7 +98,7 @@ export function knowledgeRecordToChangeSet(record: ResearchProjectionOutboxRecor
     summary: compact(evidence.note || "尚未添加阅读标注。"),
     stance: evidence.stance,
     confidence: evidence.confidence,
-    properties: { evidenceRecordId: evidence.id, paperId: evidence.paper.id },
+    properties: { evidenceRecordId: evidence.id, paperId: evidence.paper.id, limitations: evidence.limitations },
     createdAt: evidence.createdAt,
     updatedAt: evidence.createdAt,
   });
@@ -106,6 +106,7 @@ export function knowledgeRecordToChangeSet(record: ResearchProjectionOutboxRecor
   builder.relation("CONTAINS", record.projectId, assertion);
   builder.relation("HAS_FRAGMENT", paper, fragment);
   builder.relation("BASED_ON", assertion, fragment);
+  if (evidence.claimRevisionId) builder.relation("ASSERTS", assertion, evidence.claimRevisionId);
   builder.relation("EVALUATES", assertion, questionId(record.projectId));
   return builder.build();
 }

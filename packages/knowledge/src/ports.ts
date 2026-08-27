@@ -7,8 +7,8 @@ import type {
 export interface ProjectStore {
   listProjects(): Gate4Project[];
   getProject(id: string): Gate4Project | undefined;
-  createProject(input: { name: string; description: string; researchQuestion: string }): Gate4Project;
-  updateProject(id: string, patch: Partial<Pick<Gate4Project, "name" | "description" | "researchQuestion" | "status">>): Gate4Project | undefined;
+  createProject(input: { name: string; description: string; researchQuestion: string; domainIds: string[] }): Gate4Project;
+  updateProject(id: string, patch: Partial<Pick<Gate4Project, "name" | "description" | "researchQuestion" | "domainIds" | "status">>): Gate4Project | undefined;
 }
 export interface ProjectItemStore {
   listItems(projectId: string): ProjectItem[];
@@ -41,7 +41,7 @@ export interface WikiStore {
   archiveWikiPage(id: string): boolean;
 }
 export interface EvidenceStore {
-  saveEvidence(projectId: string, paper: PaperRecord, note?: string, stance?: EvidenceRecord["stance"], confidence?: number): EvidenceRecord;
+  saveEvidence(projectId: string, paper: PaperRecord, note?: string, stance?: EvidenceRecord["stance"], confidence?: number, source?: Pick<EvidenceRecord, "sourceQuote" | "sourceLocator" | "limitations" | "claimRevisionId">): EvidenceRecord;
   listEvidence(projectId?: string): EvidenceRecord[];
 }
 export interface ResearchProjectionOutboxRecord {

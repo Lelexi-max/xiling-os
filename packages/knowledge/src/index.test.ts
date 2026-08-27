@@ -11,7 +11,7 @@ describe("knowledge service smoke", () => {
     const root = await mkdtemp(join(tmpdir(), "xiling-knowledge-"));
     const path = join(root, "knowledge.sqlite");
     const first = new KnowledgeService(path);
-    const project = first.createProject({ name: "边缘海实验", description: "fixture", researchQuestion: "层结如何变化？" });
+    const project = first.createProject({ name: "边缘海实验", description: "fixture", researchQuestion: "层结如何变化？", domainIds: ["ocean-climate"] });
     const task = first.createItem(project.id, { kind: "task", title: "检查剖面", notes: "QC" });
     expect(first.updateItem(task.id, { status: "done" })?.status).toBe("done");
     const target = first.createWikiPage({ projectId: project.id, title: "数据方法", markdown: "# 数据方法" });
@@ -32,12 +32,13 @@ describe("knowledge service smoke", () => {
     restored.close();
   });
 
-  it("deduplicates evidence by project and paper", async () => {
+  it("deduplicates retries while allowing one paper to support multiple claims", async () => {
     const root = await mkdtemp(join(tmpdir(), "xiling-evidence-"));
     const service = new KnowledgeService(join(root, "knowledge.sqlite"));
     const paper = { id: "paper-1", title: "Ocean paper", year: 2024, authors: ["Lin"], citationCount: 4, references: [], source: "fixture" as const };
     expect(service.saveEvidence("ocean-heatwave", paper).id).toBe(service.saveEvidence("ocean-heatwave", paper).id);
-    expect(service.listEvidence()).toHaveLength(1);
+    service.saveEvidence("ocean-heatwave", paper, "另一主张", "supports", 0.8, { sourceQuote: "Observed warming persisted.", limitations: "regional", claimRevisionId: "claim:2:r1" });
+    expect(service.listEvidence()).toHaveLength(2);
     service.close();
   });
 
@@ -45,7 +46,7 @@ describe("knowledge service smoke", () => {
     const root = await mkdtemp(join(tmpdir(), "xiling-knowledge-outbox-"));
     const path = join(root, "knowledge.sqlite");
     const first = new KnowledgeService(path);
-    const project = first.createProject({ name: "Outbox 项目", description: "atomic", researchQuestion: "投影是否耐久？" });
+    const project = first.createProject({ name: "Outbox 项目", description: "atomic", researchQuestion: "投影是否耐久？", domainIds: ["general-science"] });
     const projectEvent = first.listProjectionOutbox().find((event) => event.projectId === project.id && event.eventType === "knowledge.project.upserted");
     expect(projectEvent).toMatchObject({ sourceId: project.id, payload: { name: "Outbox 项目" } });
     expect(first.markProjectionOutboxApplied([projectEvent!.projectionKey])).toBe(1);
@@ -61,7 +62,7 @@ describe("knowledge service smoke", () => {
     const root = await mkdtemp(join(tmpdir(), "xiling-chat-history-"));
     const path = join(root, "knowledge.sqlite");
     const first = new KnowledgeService(path);
-    const project = first.createProject({ name: "海气耦合", description: "fixture", researchQuestion: "风应力如何响应？" });
+    const project = first.createProject({ name: "海气耦合", description: "fixture", researchQuestion: "风应力如何响应？", domainIds: ["ocean-climate"] });
     const session = first.createChatSession(project.id, "检查风应力资料");
     first.appendChatMessage(session.id, { role: "user", text: "列出资料", status: "complete" });
     first.appendChatMessage(session.id, { role: "assistant", text: "已找到三类资料", status: "complete" });

@@ -13,6 +13,7 @@ const commands = [
   ["node", ["scripts/mcp-adapter-smoke.mjs"]],
   ["node", ["scripts/research-graph-smoke.mjs"]],
   ["node", ["scripts/platform-smoke.mjs"]],
+  ["node", ["scripts/web-human-factors-check.mjs"]],
 ];
 
 for (const [command, args] of commands) {
@@ -31,22 +32,20 @@ if (builtAssets.length === 0 || builtAssets.some((asset) => !existsSync(resolve(
 }
 console.log(`Web asset manifest smoke: ok (${builtAssets.length} entry assets)`);
 
-const image = spawnSync("docker", ["image", "inspect", "xiling-runner:gate3"], { stdio: "ignore", shell: false });
+const image = spawnSync("docker", ["image", "inspect", "xiling-runner:gate4"], { stdio: "ignore", shell: false });
 if (image.status === 0) {
-  const runner = spawnSync("docker", ["run", "--rm", "xiling-runner:gate3", "python", "smoke.py"], {
+  const runner = spawnSync("docker", ["run", "--rm", "xiling-runner:gate4", "python", "smoke.py"], {
     stdio: "inherit",
     shell: false,
   });
   if (runner.status !== 0) process.exit(runner.status ?? 1);
-  const gate3 = spawnSync("docker", ["run", "--rm", "xiling-runner:gate3", "python", "gate3_smoke.py"], {
+  const gate3 = spawnSync("docker", ["run", "--rm", "xiling-runner:gate4", "python", "gate3_smoke.py"], {
     stdio: "inherit",
     shell: false,
   });
   if (gate3.status !== 0) process.exit(gate3.status ?? 1);
-  const adapter = spawnSync("node", ["scripts/gate3-server-smoke.mjs"], { stdio: "inherit", shell: false });
-  if (adapter.status !== 0) process.exit(adapter.status ?? 1);
 } else {
-  console.log("Runner image unavailable; offline TypeScript smoke continues. Build xiling-runner:gate3 for container checks.");
+  console.log("Runner image unavailable; offline TypeScript smoke continues. Build xiling-runner:gate4 for container checks.");
 }
 
 const connectorImage = spawnSync("docker", ["image", "inspect", "xiling-runner:gate4"], { stdio: "ignore", shell: false });
@@ -57,4 +56,4 @@ if (connectorImage.status === 0) {
   console.log("Gate 4 Runner image unavailable; connector smoke remains host-offline. Build xiling-runner:gate4 for official-client import checks.");
 }
 
-console.log("Gate 3 unified smoke: ok");
+console.log("XiLing unified smoke: ok");

@@ -59,4 +59,22 @@ describe("Agent Execution Graph projector", () => {
       expect(graph.truncated).toBe(true);
     } finally { store.close(); }
   });
+
+  it("projects a child Agent as one delegated task instead of losing its lineage", async () => {
+    const { store, session, run } = await fixtureStore();
+    try {
+      const child = store.createSession({ id: "child-reviewer", projectId: "ocean-project" });
+      const childRun = store.startRun({ sessionId: child.id, clientCommandId: "child-1", prompt: "独立审查结论" }).run;
+      store.transitionRun(childRun.id, "running");
+      store.appendEntry(child.id, childRun.id, { kind: "user", role: "user", text: childRun.prompt });
+      store.appendEntry(child.id, childRun.id, { kind: "assistant", role: "assistant", text: "发现证据不足。" });
+      store.transitionRun(childRun.id, "completed");
+      store.createDelegation({ id: "delegation-review", projectId: "ocean-project", rootRunId: run.id, parentRunId: run.id, childSessionId: child.id, childRunId: childRun.id, roleId: "skeptical-reviewer", objective: "独立审查结论", isolation: "blind", contextManifestHash: "b".repeat(64), contextManifest: { entities: ["claim"] }, budget: {}, status: "completed", result: { summary: "发现证据不足" } });
+
+      const graph = projectAgentExecutionGraph(store, { projectId: "ocean-project", scope: "session", sessionId: session.id });
+      expect(graph.counts).toMatchObject({ sessions: 2, runs: 2, delegations: 1 });
+      expect(graph.nodes).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "delegation", source: expect.objectContaining({ delegationId: "delegation-review" }), childRunId: childRun.id })]));
+      expect(graph.edges).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "delegated", source: `run:${run.id}` }), expect.objectContaining({ target: `run:${childRun.id}` })]));
+    } finally { store.close(); }
+  });
 });

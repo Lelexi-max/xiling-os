@@ -31,11 +31,12 @@ export interface AgentCenterRouteDependencies {
   projectActive(projectId: string): boolean;
   sessionExists(sessionId: string, projectId: string): boolean;
   sessionTitle?(sessionId: string): string | undefined;
+  listAgentRoles?(): Array<{ id: string; title: string; description: string; allowedCapabilities: string[]; defaultIsolation: string; dynamic?: boolean }>;
   acceptedInputModalities(): Promise<ModelModality[]>;
 }
 
 export function registerAgentCenterRoutes(app: FastifyInstance, dependencies: AgentCenterRouteDependencies): void {
-  const { harness, store, ready, projectExists, projectActive, sessionExists, sessionTitle, acceptedInputModalities } = dependencies;
+  const { harness, store, ready, projectExists, projectActive, sessionExists, sessionTitle, listAgentRoles, acceptedInputModalities } = dependencies;
 
   const sessionInProject = (sessionId: string, projectId: string) => {
     const session = store.getSession(sessionId);
@@ -57,7 +58,18 @@ export function registerAgentCenterRoutes(app: FastifyInstance, dependencies: Ag
     formalChatMigrated: true,
     researchGraphContext: true,
     workflowProjection: "durable-server-owned",
+    multiAgent: { enabled: true, maxConcurrency: 3, maxTasksPerDelegation: 6, recursiveDelegation: false },
   }));
+
+  app.get("/api/agent-center/roles", async () => ({ roles: listAgentRoles?.() ?? [] }));
+
+  app.get("/api/agent-center/delegations", async (request, reply) => {
+    await ready;
+    const query = z.object({ projectId: id }).safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: "Invalid delegation query" });
+    if (!projectExists(query.data.projectId)) return reply.code(404).send({ error: "Project not found" });
+    return { delegations: store.listProjectDelegations(query.data.projectId) };
+  });
 
   app.get("/api/agent-center/graph", async (request, reply) => {
     await ready;

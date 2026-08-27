@@ -16,7 +16,7 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from "@xyflow/react";
-import type { ResearchGraphEntity, ResearchGraphProjection, ResearchGraphView, ResearchRelationKind, ScientificCanvasLayout } from "@xiling/contracts";
+import type { ResearchGraphEntity, ResearchGraphProjection, ResearchGraphProposal, ResearchGraphView, ResearchRelationKind, ScientificCanvasLayout } from "@xiling/contracts";
 import { apiJson, jsonInit } from "../lib/api-client.js";
 import { useConversations } from "../workspace/ConversationContext.js";
 
@@ -68,10 +68,28 @@ const semanticRank: Record<string, number> = {
   Artifact: 6, ReviewReport: 6, ArtifactVersion: 7, LifecycleEvent: 8, Actor: 8,
 };
 
-function arrangedPositions(entities: ResearchGraphEntity[]): Map<string, { x: number; y: number }> {
+export function arrangedPositions(entities: ResearchGraphEntity[], relations: ResearchGraphProjection["relations"] = []): Map<string, { x: number; y: number }> {
+  const incoming = new Map<string, string[]>();
+  const forward = new Set<ResearchRelationKind>(["CONTAINS", "HAS_REVISION", "HAS_FRAGMENT", "GENERATED", "HAS_VERSION", "TRANSITIONED_BY"]);
+  const reverse = new Set<ResearchRelationKind>(["ASSERTS", "BASED_ON", "USED", "DERIVED_FROM", "EVALUATES", "DOCUMENTS", "SUPERSEDES"]);
+  for (const relation of relations) {
+    const parentId = forward.has(relation.kind) ? relation.sourceId : reverse.has(relation.kind) ? relation.targetId : undefined;
+    const childId = forward.has(relation.kind) ? relation.targetId : reverse.has(relation.kind) ? relation.sourceId : undefined;
+    if (parentId && childId) incoming.set(childId, [...(incoming.get(childId) ?? []), parentId]);
+  }
+  const ranks = new Map<string, number>();
+  const rankOf = (entity: ResearchGraphEntity, stack = new Set<string>()): number => {
+    const cached = ranks.get(entity.id); if (cached !== undefined) return cached;
+    if (stack.has(entity.id)) return semanticRank[entity.kind] ?? 4;
+    const nextStack = new Set(stack).add(entity.id);
+    const parents = (incoming.get(entity.id) ?? []).map((id) => entities.find((candidate) => candidate.id === id)).filter(Boolean) as ResearchGraphEntity[];
+    const graphRank = parents.length ? Math.max(...parents.map((parent) => rankOf(parent, nextStack))) + 1 : 0;
+    const value = Math.max(graphRank, semanticRank[entity.kind] ?? 0);
+    ranks.set(entity.id, value); return value;
+  };
   const grouped = new Map<number, ResearchGraphEntity[]>();
   for (const entity of entities) {
-    const rank = semanticRank[entity.kind] ?? 4;
+    const rank = rankOf(entity);
     grouped.set(rank, [...(grouped.get(rank) ?? []), entity]);
   }
   const result = new Map<string, { x: number; y: number }>();
@@ -84,7 +102,7 @@ function arrangedPositions(entities: ResearchGraphEntity[]): Map<string, { x: nu
 }
 
 function toNodes(graph: ResearchGraphProjection, layout: ScientificCanvasLayout): ScientificNode[] {
-  const automatic = arrangedPositions(graph.nodes);
+  const automatic = arrangedPositions(graph.nodes, graph.relations);
   const persisted = new Map(layout.positions.map((position) => [position.entityId, { x: position.x, y: position.y }]));
   return graph.nodes.map((entity) => ({ id: entity.id, type: "scientific", data: entity as ScientificNodeData, position: persisted.get(entity.id) ?? automatic.get(entity.id) ?? { x: 0, y: 0 } }));
 }
@@ -108,7 +126,7 @@ function toEdges(graph: ResearchGraphProjection): ScientificEdge[] {
   }));
 }
 
-export function ScientificCanvasView({ projectId }: { projectId: string }) {
+export function ScientificCanvasView({ projectId, onNavigate }: { projectId: string; onNavigate?: (view: "chat" | "wiki" | "papers") => void }) {
   const [view, setView] = useState<ResearchGraphView>("all");
   const [graph, setGraph] = useState<ResearchGraphProjection>();
   const [layout, setLayout] = useState<ScientificCanvasLayout>();
@@ -117,7 +135,13 @@ export function ScientificCanvasView({ projectId }: { projectId: string }) {
   const [selectedId, setSelectedId] = useState("");
   const [quotedIds, setQuotedIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
+  const [focusOneHop, setFocusOneHop] = useState(false);
+  const [relationFilter, setRelationFilter] = useState<ResearchRelationKind | "all">("all");
   const [status, setStatus] = useState("正在读取科研图…");
+  const [proposals, setProposals] = useState<ResearchGraphProposal[]>([]);
+  const [proposalOpen, setProposalOpen] = useState(false);
+  const [proposalTitle, setProposalTitle] = useState("");
+  const [proposalSummary, setProposalSummary] = useState("");
   const flow = useRef<ReactFlowInstance<ScientificNode, ScientificEdge> | null>(null);
   const revisionByView = useRef(new Map<ResearchGraphView, number>());
   const viewRef = useRef(view);
@@ -135,15 +159,17 @@ export function ScientificCanvasView({ projectId }: { projectId: string }) {
     setStatus("正在读取科研图…");
     try {
       const encodedProject = encodeURIComponent(projectId);
-      const [nextGraph, nextLayout] = await Promise.all([
+      const [nextGraph, nextLayout, nextProposals] = await Promise.all([
         apiJson<ResearchGraphProjection>(`/api/projects/${encodedProject}/research-graph?view=${view}`),
         apiJson<ScientificCanvasLayout>(`/api/projects/${encodedProject}/research-graph/layout?view=${view}`),
+        apiJson<ResearchGraphProposal[]>(`/api/projects/${encodedProject}/research-graph/proposals`),
       ]);
       setGraph(nextGraph);
       setLayout(nextLayout);
       revisionByView.current.set(view, nextLayout.revision);
       setNodes(toNodes(nextGraph, nextLayout));
       setEdges(toEdges(nextGraph));
+      setProposals(nextProposals);
       setSelectedId((current) => nextGraph.nodes.some((node) => node.id === current) ? current : nextGraph.nodes.find((node) => node.kind === "ResearchQuestion")?.id ?? nextGraph.nodes[0]?.id ?? "");
       setQuotedIds([]);
       setStatus(`${nextGraph.nodes.length} 个科研对象 · ${nextGraph.relations.length} 条关系`);
@@ -173,7 +199,7 @@ export function ScientificCanvasView({ projectId }: { projectId: string }) {
 
   const autoArrange = () => {
     if (!graph) return;
-    const positions = arrangedPositions(graph.nodes);
+    const positions = arrangedPositions(graph.nodes, graph.relations);
     const next = nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }));
     setNodes(next);
     acceptViewportChanges.current = false;
@@ -188,18 +214,30 @@ export function ScientificCanvasView({ projectId }: { projectId: string }) {
 
   const selected = graph?.nodes.find((node) => node.id === selectedId);
   const relatedRelations = graph?.relations.filter((relation) => relation.sourceId === selectedId || relation.targetId === selectedId) ?? [];
+  const focusedIds = useMemo(() => {
+    if (!focusOneHop || !selectedId) return undefined;
+    const ids = new Set([selectedId]);
+    for (const relation of graph?.relations ?? []) if (relation.sourceId === selectedId || relation.targetId === selectedId) {
+      ids.add(relation.sourceId); ids.add(relation.targetId);
+    }
+    return ids;
+  }, [focusOneHop, graph?.relations, selectedId]);
   const filteredEdges = useMemo(() => {
     const term = query.trim().toLocaleLowerCase();
     const matching = term ? new Set(nodes.filter((node) => `${node.data.title} ${node.data.summary} ${kindLabel[node.data.kind] ?? node.data.kind}`.toLocaleLowerCase().includes(term)).map((node) => node.id)) : undefined;
-    return edges.map((edge) => ({ ...edge, style: { ...edge.style, opacity: matching ? matching.has(edge.source) || matching.has(edge.target) ? .8 : .09 : selectedId && (edge.source === selectedId || edge.target === selectedId) ? .9 : .42, strokeWidth: selectedId && (edge.source === selectedId || edge.target === selectedId) ? 1.8 : 1.15 } }));
-  }, [edges, nodes, query, selectedId]);
+    return edges.map((edge) => {
+      const relationMatches = relationFilter === "all" || edge.data?.kind === relationFilter;
+      const focusMatches = !focusedIds || (focusedIds.has(edge.source) && focusedIds.has(edge.target));
+      return { ...edge, hidden: !relationMatches || !focusMatches, style: { ...edge.style, opacity: matching ? matching.has(edge.source) || matching.has(edge.target) ? .8 : .09 : selectedId && (edge.source === selectedId || edge.target === selectedId) ? .9 : .42, strokeWidth: selectedId && (edge.source === selectedId || edge.target === selectedId) ? 1.8 : 1.15 } };
+    });
+  }, [edges, focusedIds, nodes, query, relationFilter, selectedId]);
   const displayedNodes = useMemo(() => {
     const term = query.trim().toLocaleLowerCase();
     return nodes.map((node) => {
       const matches = !term || `${node.data.title} ${node.data.summary} ${kindLabel[node.data.kind] ?? node.data.kind}`.toLocaleLowerCase().includes(term);
-      return { ...node, selected: node.id === selectedId, style: { ...node.style, opacity: matches ? 1 : .18 } };
+      return { ...node, hidden: Boolean(focusedIds && !focusedIds.has(node.id)), selected: node.id === selectedId, style: { ...node.style, opacity: matches ? 1 : .18 } };
     });
-  }, [nodes, query, selectedId]);
+  }, [focusedIds, nodes, query, selectedId]);
 
   const focusSearch = () => {
     const term = query.trim().toLocaleLowerCase();
@@ -219,11 +257,34 @@ export function ScientificCanvasView({ projectId }: { projectId: string }) {
     } catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
   };
 
+  const submitProposal = async () => {
+    if (!proposalTitle.trim() || !proposalSummary.trim()) return;
+    const action = selected?.kind === "Claim"
+      ? { type: "revise_claim" as const, claimId: selected.id, title: proposalTitle.trim(), summary: proposalSummary.trim() }
+      : { type: "create_claim" as const, title: proposalTitle.trim(), summary: proposalSummary.trim() };
+    setStatus("正在创建科研图变更提案…");
+    try {
+      const created = await apiJson<ResearchGraphProposal>(`/api/projects/${encodeURIComponent(projectId)}/research-graph/proposals`, jsonInit("POST", action));
+      setProposals((current) => [created, ...current]);
+      setProposalOpen(false); setProposalTitle(""); setProposalSummary("");
+      setStatus("提案已生成；接受前不会改变科研事实");
+    } catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
+  };
+
+  const decideProposal = async (proposal: ResearchGraphProposal, decision: "accept" | "reject") => {
+    setStatus(decision === "accept" ? "正在应用已确认的科研变更…" : "正在拒绝提案…");
+    try {
+      await apiJson(`/api/projects/${encodeURIComponent(projectId)}/research-graph/proposals/${proposal.id}/decision`, jsonInit("POST", { decision }));
+      await load();
+      setStatus(decision === "accept" ? "科研图已写入新主张版本" : "提案已拒绝；科研图未改变");
+    } catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
+  };
+
   return <div className="scientific-canvas-shell">
     <div className="scientific-canvas-topbar">
       <div><span className="scientific-canvas-mark">RG</span><b>科研画布</b><small>事实、证据、计算溯源与产物生命周期</small></div>
       <div className="scientific-canvas-views">{views.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} title={item.hint} onClick={() => setView(item.id)}>{item.label}</button>)}</div>
-      <div className="scientific-canvas-actions"><button onClick={autoArrange}>自动整理</button><button onClick={() => void flow.current?.fitView({ padding: .18, duration: 300 })}>查看全景</button></div>
+      <div className="scientific-canvas-actions"><button onClick={() => { setProposalOpen(true); setProposalTitle(selected?.kind === "Claim" ? selected.title : ""); setProposalSummary(selected?.kind === "Claim" ? selected.summary : ""); }}>{selected?.kind === "Claim" ? "修订主张" : "提出主张"}</button><button className={focusOneHop ? "active" : ""} disabled={!selectedId} onClick={() => setFocusOneHop((current) => !current)}>{focusOneHop ? "退出聚焦" : "聚焦 1 跳"}</button><button onClick={autoArrange}>自动整理</button><button onClick={() => void flow.current?.fitView({ padding: .18, duration: 300 })}>查看全景</button></div>
     </div>
     <div className="scientific-canvas-search"><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") focusSearch(); }} placeholder="搜索实体、摘要或类型" /><button onClick={focusSearch}>定位</button><span>{status}</span></div>
     <ReactFlow<ScientificNode, ScientificEdge>
@@ -260,6 +321,7 @@ export function ScientificCanvasView({ projectId }: { projectId: string }) {
         <h2>{selected.title}</h2><p>{selected.summary || "暂无摘要"}</p>
         <dl><div><dt>状态</dt><dd>{selected.status ?? "未标记"}</dd></div><div><dt>版本</dt><dd>{selected.revision}</dd></div><div><dt>关系</dt><dd>{relatedRelations.length}</dd></div>{selected.stance ? <div><dt>立场</dt><dd>{selected.stance}</dd></div> : null}</dl>
         {selected.uri ? <code>{selected.uri}</code> : null}
+        {selected.sourceLocator ? <div className="scientific-source-action">{/^https?:\/\//.test(selected.sourceLocator) ? <a href={selected.sourceLocator} target="_blank" rel="noreferrer">打开原始来源 ↗</a> : <button onClick={() => onNavigate?.(selected.kind === "Paper" || selected.kind === "SourceFragment" ? "papers" : selected.kind === "WikiRevisionRef" ? "wiki" : "chat")}>前往来源视图</button>}<small>{selected.sourceLocator}</small></div> : null}
         <section><b>直接关系</b>{relatedRelations.slice(0, 8).map((relation) => {
           const peerId = relation.sourceId === selected.id ? relation.targetId : relation.sourceId;
           const peer = graph?.nodes.find((node) => node.id === peerId);
@@ -272,6 +334,8 @@ export function ScientificCanvasView({ projectId }: { projectId: string }) {
         {!activeSessionId ? <small className="scientific-context-hint">先在 Chat 新建或选择对话后即可绑定上下文。</small> : <small className="scientific-context-hint">仅加载所选实体、有限邻域与显式引用，不载入整张图。</small>}
       </> : null}
     </aside>
-    <div className="scientific-canvas-legend"><b>关系</b>{(["BASED_ON", "ASSERTS", "USED", "GENERATED", "DERIVED_FROM", "EVALUATES"] as ResearchRelationKind[]).map((kind) => <span key={kind}><i style={{ background: relationColor[kind] }} />{relationLabel[kind]}</span>)}</div>
+    <div className="scientific-canvas-legend"><button className={relationFilter === "all" ? "active" : ""} onClick={() => setRelationFilter("all")}>全部关系</button>{(["BASED_ON", "ASSERTS", "USED", "GENERATED", "DERIVED_FROM", "EVALUATES"] as ResearchRelationKind[]).map((kind) => <button key={kind} className={relationFilter === kind ? "active" : ""} onClick={() => setRelationFilter((current) => current === kind ? "all" : kind)}><i style={{ background: relationColor[kind] }} />{relationLabel[kind]}</button>)}</div>
+    {proposalOpen ? <div className="scientific-proposal-dialog" role="dialog" aria-modal="true" aria-label="科研图变更提案"><div><header><div><small>{selected?.kind === "Claim" ? "创建不可变主张版本" : "创建新科研主张"}</small><h2>预览科研图变更</h2></div><button aria-label="关闭" onClick={() => setProposalOpen(false)}>×</button></header><label><span>主张标题</span><input autoFocus value={proposalTitle} onChange={(event) => setProposalTitle(event.target.value)} /></label><label><span>主张内容与适用边界</span><textarea value={proposalSummary} onChange={(event) => setProposalSummary(event.target.value)} placeholder="写明结论、条件、时间/区域范围和不确定性…" /></label><p>提交只生成待审提案；接受后才会写入 Claim / ClaimRevision，并保留版本关系。</p><footer><button onClick={() => setProposalOpen(false)}>取消</button><button className="primary" disabled={!proposalTitle.trim() || !proposalSummary.trim()} onClick={() => void submitProposal()}>生成提案</button></footer></div></div> : null}
+    {proposals.some((proposal) => proposal.status === "pending") ? <aside className="scientific-proposal-tray"><header><b>待确认变更</b><span>{proposals.filter((proposal) => proposal.status === "pending").length}</span></header>{proposals.filter((proposal) => proposal.status === "pending").map((proposal) => <article key={proposal.id}><small>{proposal.action.type === "create_claim" ? "新建主张" : "修订主张"}</small><b>{proposal.action.title}</b><p>{proposal.action.summary}</p><footer><button onClick={() => void decideProposal(proposal, "reject")}>拒绝</button><button className="primary" onClick={() => void decideProposal(proposal, "accept")}>接受并写入</button></footer></article>)}</aside> : null}
   </div>;
 }

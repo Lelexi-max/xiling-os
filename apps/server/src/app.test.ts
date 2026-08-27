@@ -3,21 +3,7 @@ import { createApp } from "./app.js";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Gate3ResearchService, JsonProjectRepository } from "@xiling/research";
 import { KnowledgeService } from "@xiling/knowledge";
-
-async function gate3App() {
-  const root = await mkdtemp(join(tmpdir(), "xiling-server-gate3-"));
-  const research = new Gate3ResearchService(new JsonProjectRepository(join(root, "project.json")), {
-    async execute() {
-      return {
-        artifactUris: ["artifact://map", "artifact://crate"],
-        checks: [{ id: "fixture", passed: true, detail: "ok" }],
-      };
-    },
-  });
-  return createApp({ research });
-}
 
 type TestApp = ReturnType<typeof createApp>;
 
@@ -50,6 +36,15 @@ describe("server vertical slice", () => {
 
     const health = await app.inject({ method: "GET", url: "/health" });
     expect(health.statusCode).toBe(200);
+    const domains = await app.inject({ method: "GET", url: "/api/science/domains" });
+    expect(domains.json()).toMatchObject({ domains: [expect.objectContaining({ id: "general-science" }), expect.objectContaining({ id: "ocean-climate" })] });
+    expect(domains.body).not.toContain("systemPrompt");
+
+    const generalProject = await app.inject({ method: "POST", url: "/api/gate4/projects", payload: { name: "通用材料研究", researchQuestion: "退火如何影响强度？", domainIds: ["general-science"] } });
+    expect(generalProject.statusCode).toBe(201);
+    expect(generalProject.json()).toMatchObject({ domainIds: ["general-science"] });
+    const unknownDomain = await app.inject({ method: "POST", url: "/api/gate4/projects", payload: { name: "未知领域", researchQuestion: "能否加载？", domainIds: ["unknown-domain"] } });
+    expect(unknownDomain.statusCode).toBe(400);
 
     const projection = await app.inject({
       method: "POST",
@@ -188,47 +183,6 @@ describe("server vertical slice", () => {
     expect(short.cache).toBe("miss");
     expect(long.cache).toBe("miss");
     expect((await app.inject({ method: "GET", url: "/api/metrics/context" })).json().assemblyCache).toMatchObject({ entries: 2, estimatedTokens: expect.any(Number) });
-    await app.close();
-  });
-
-  it("enforces approval before completing the Gate 3 research loop", async () => {
-    const app = await gate3App();
-    await app.inject({ method: "POST", url: "/api/gate3/plan" });
-    const denied = await app.inject({ method: "POST", url: "/api/gate3/run" });
-    expect(denied.statusCode).toBe(403);
-
-    const approved = await app.inject({ method: "POST", url: "/api/gate3/approvals/approval-argo-gate3/approve" });
-    expect(approved.statusCode).toBe(200);
-    const completed = await app.inject({ method: "POST", url: "/api/gate3/run" });
-    expect(completed.statusCode).toBe(200);
-    expect(completed.json()).toMatchObject({ run: { status: "succeeded" }, review: { verdict: "accepted" } });
-    await app.close();
-  });
-
-  it("cancels an active research run through the application cancellation token", async () => {
-    const root = await mkdtemp(join(tmpdir(), "xiling-server-cancel-"));
-    const research = new Gate3ResearchService(new JsonProjectRepository(join(root, "project.json")), {
-      async execute(_plan, signal) {
-        return new Promise((_resolve, reject) => signal?.addEventListener("abort", () => reject(new Error("cancelled")), { once: true }));
-      },
-    });
-    const app = createApp({ research });
-    await app.inject({ method: "POST", url: "/api/gate3/plan" });
-    await app.inject({ method: "POST", url: "/api/gate3/approvals/approval-argo-gate3/approve" });
-    const running = app.inject({ method: "POST", url: "/api/gate3/run" });
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const cancelled = await app.inject({ method: "POST", url: "/api/gate3/run/cancel" });
-    expect(cancelled.statusCode).toBe(200);
-    expect((await running).statusCode).toBe(409);
-    const snapshot = await app.inject({ method: "GET", url: "/api/gate3/snapshot" });
-    expect(snapshot.json()).toMatchObject({ run: { status: "cancelled" } });
-    await app.close();
-  });
-
-  it("rejects artifact path traversal", async () => {
-    const app = createApp();
-    const response = await app.inject({ method: "GET", url: "/api/gate3/artifacts/20b05746-eff2-48d7-a621-c1f150b1b254/%2e%2e/project.json" });
-    expect(response.statusCode).not.toBe(200);
     await app.close();
   });
 
@@ -403,7 +357,33 @@ describe("server vertical slice", () => {
     const projected = await restored.inject({ method: "GET", url: "/api/projects/ocean-heatwave/research-graph?view=evidence" });
     expect(projected.json().nodes).toEqual(expect.arrayContaining([expect.objectContaining({ id: expect.stringContaining("evidence-assertion:"), kind: "EvidenceAssertion", stance: "insufficient", confidence: 0.5 })]));
     expect(projected.json().relations).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "BASED_ON" }), expect.objectContaining({ kind: "EVALUATES", targetId: "research-question:ocean-heatwave" })]));
+    const overview = await restored.inject({ method: "GET", url: "/api/projects/ocean-heatwave/overview" });
+    expect(overview.statusCode, overview.body).toBe(200);
+    expect(overview.json()).toMatchObject({ project: { id: "ocean-heatwave" }, researchGraph: { nodes: expect.any(Array), relations: expect.any(Array) }, workflows: expect.any(Array), generatedAt: expect.any(String) });
+    expect(overview.json().items).toEqual(expect.arrayContaining([expect.objectContaining({ id: item.json().id })]));
+    expect(overview.json().evidence).toEqual(expect.arrayContaining([expect.objectContaining({ paper: expect.objectContaining({ id: paperId }) })]));
     await restored.close();
+  });
+
+  it("requires an accepted proposal before evidence can assert a durable claim revision", async () => {
+    const app = createApp({ dataRoot: await mkdtemp(join(tmpdir(), "xiling-claim-evidence-")) });
+    const proposal = await app.inject({ method: "POST", url: "/api/projects/ocean-heatwave/research-graph/proposals", payload: { type: "create_claim", title: "增强层结延长暖异常", summary: "适用于弱风和浅混合层条件。" } });
+    expect(proposal.statusCode, proposal.body).toBe(201);
+    const before = await app.inject({ method: "GET", url: "/api/projects/ocean-heatwave/research-graph?view=evidence" });
+    expect(before.json().nodes).not.toEqual(expect.arrayContaining([expect.objectContaining({ kind: "ClaimRevision", title: "增强层结延长暖异常" })]));
+    const accepted = await app.inject({ method: "POST", url: `/api/projects/ocean-heatwave/research-graph/proposals/${proposal.json().id}/decision`, payload: { decision: "accept" } });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+    const claimRevisionId = accepted.json().appliedEntityIds.find((id: string) => id.includes(":r1"));
+    const evidence = await app.inject({ method: "POST", url: "/api/gate4/evidence", payload: {
+      projectId: "ocean-heatwave",
+      paper: { id: "paper-claim-1", title: "Stratification and marine heatwaves", year: 2025, authors: ["Lin"], citationCount: 3, references: [], source: "fixture", url: "https://example.invalid/paper-claim-1" },
+      note: "观测支持该条件性主张", sourceQuote: "Stronger stratification prolonged the surface anomaly.", sourceLocator: "https://example.invalid/paper-claim-1#page=4", limitations: "仅覆盖夏季观测", stance: "supports", confidence: 0.75, claimRevisionId,
+    } });
+    expect(evidence.statusCode, evidence.body).toBe(201);
+    const graph = await app.inject({ method: "GET", url: "/api/projects/ocean-heatwave/research-graph?view=evidence" });
+    expect(graph.json().relations).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "ASSERTS", targetId: claimRevisionId })]));
+    expect(graph.json().nodes).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "SourceFragment", summary: "Stronger stratification prolonged the surface anomaly." })]));
+    await app.close();
   });
 
   it("stores provider credentials without returning secret values and updates connector readiness", async () => {

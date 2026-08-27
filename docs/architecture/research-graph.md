@@ -94,10 +94,8 @@ Research Graph 只接受结构化 `ResearchGraphChangeSet`：
 ```text
 GET  /api/projects/:projectId/research-graph?view=...
 GET  /api/projects/:projectId/research-graph/artifacts/:artifactVersionId/lineage
-// RG-3/5 后续写入协议：
 POST /api/projects/:projectId/research-graph/proposals
-POST /api/projects/:projectId/research-graph/proposals/:id/confirm
-POST /api/projects/:projectId/research-graph/proposals/:id/reject
+POST /api/projects/:projectId/research-graph/proposals/:id/decision
 ```
 
 模型不能提交任意 Cypher。Agent 使用稳定的 `query_research_graph` 元工具，参数只允许项目、焦点实体、视图、关系白名单、深度和返回上限。
@@ -145,6 +143,6 @@ RG-1 已把 Agent Execution Graph 切入 Chat，且不写 Research Graph。RG-2 
 
 RG-3 已接入顶层 Scientific Canvas：五种受限投影、自由拖动、纵向语义自动布局、曲线关系、搜索/详情/图例，以及独立 `scientific-canvas-layout.sqlite`。布局以项目和视图隔离并使用 revision 乐观并发，投影外实体不能写入布局。用户显式把实体设为 Chat context 后，Context Broker 只组装该实体、确定性的两跳有限邻域、显式引用、Capsule 与 Artifact URI，不读取整张图，也不再读取旧 Canvas。
 
-RG-4 已完成文献闭环：真实 Provider 摘要、原文入口、阅读标注、立场和置信度随 Evidence 捕获记录持久化；Knowledge outbox 投影 `Paper HAS_FRAGMENT SourceFragment`、`EvidenceAssertion BASED_ON SourceFragment` 与 `EvidenceAssertion EVALUATES ResearchQuestion`。文献工作台不写科研画布布局，旧 Canvas 模块已删除。
+RG-4 已完成文献闭环：真实 Provider 摘要、原文入口、阅读标注、原文摘录、精确定位、解释、局限、立场和置信度随 Evidence 捕获记录持久化；同一论文可产生多条证据。Knowledge outbox 投影 `Paper HAS_FRAGMENT SourceFragment`、`EvidenceAssertion BASED_ON SourceFragment`、`EvidenceAssertion ASSERTS ClaimRevision` 与 `EvidenceAssertion EVALUATES ResearchQuestion`。Claim 新建/修订先生成待审 proposal，用户接受后才写入不可变 ClaimRevision。
 
-RG-5 已完成本地架构与体验收口：旧 Canvas 文档契约和测试删除，Wiki 改读 Research Graph，文献证据闭环通过真实浏览器验证，完整 `pnpm check` 通过。Hosted Linux/Windows/macOS CI 在源码候选提交后复验；真实 Windows 11/WSL2 仍是正式 Beta 发布门禁。
+RG-5 本地架构与体验收口包括：旧 Canvas/Gate 3 产品面删除，Wiki 读统一项目概览与 Research Graph，科研画布提供自由拖动、纵向层级整理、一跳聚焦、关系筛选和来源跳转；文献发现图保持临时，只有显式证据捕获进入科研图。Hosted Linux/Windows/macOS CI 在源码候选提交后复验；真实 Windows 11/WSL2 仍是正式 Beta 发布门禁。

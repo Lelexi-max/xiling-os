@@ -5,6 +5,8 @@ import type { AgentKnowledgeReader } from "@xiling/knowledge";
 import { LiteratureSearchService } from "@xiling/literature";
 import { preflightConnector } from "@xiling/connectors";
 import type { CapabilityDescriptor } from "@xiling/context";
+import type { AgentRoleSpec, AgentTaskRequest, DelegationMode } from "@xiling/multi-agent";
+import type { ScienceDomainCapabilityContribution } from "@xiling/science-domains";
 
 type ToolServices = {
   project: Gate4Project;
@@ -16,9 +18,39 @@ type ToolServices = {
 };
 
 export interface ResearchCapabilityDescriptor extends CapabilityDescriptor {
-  toolName: "read_project_context" | "search_literature" | "read_project_wiki" | "plan_ocean_data_subset" | "read_artifact_excerpt";
+  toolName: string;
   alwaysAvailable?: boolean;
   skillNames: string[];
+}
+
+export function shouldOfferResearchDelegation(prompt: string): boolean {
+  const normalized = prompt.toLocaleLowerCase().normalize("NFKC");
+  return /多智能体|子智能体|并行|分别(?:检索|分析|验证)|多(?:路|个|种)(?:检索|方法|假设|数据源)|竞争(?:性)?假设|系统(?:综述|检索)|全面(?:检索|调查)|独立(?:审查|复核|验证)|交叉验证|反方审稿|文献.*(?:数据|计算|证据)|(?:比较|对照).*(?:方法|数据源|假设)|(?:复现|可重复性).*(?:审计|核验|检查)|multi[- ]?agent|parallel|independent review|systematic review/iu.test(normalized);
+}
+
+export function researchDelegationTool(input: {
+  roles: AgentRoleSpec[];
+  delegate(mode: DelegationMode, tasks: AgentTaskRequest[], signal?: AbortSignal): Promise<unknown>;
+}): RuntimeTool<any> {
+  const roleIds = input.roles.map((role) => role.id);
+  return {
+    name: "delegate_research_tasks",
+    label: "委派独立科研子任务",
+    description: `只在任务可独立验收、并行探索或需要盲审时委派。可用角色：${input.roles.map((role) => `${role.id}（${role.title}）`).join("、")}。子智能体使用隔离上下文，不能继续委派，也不能直接写科研事实。`,
+    parameters: Type.Object({
+      mode: Type.Union([Type.Literal("single"), Type.Literal("parallel"), Type.Literal("chain")]),
+      tasks: Type.Array(Type.Object({
+        roleId: Type.Union(roleIds.map((id) => Type.Literal(id))),
+        objective: Type.String({ minLength: 8, maxLength: 1_200 }),
+        isolation: Type.Optional(Type.Union([Type.Literal("scoped"), Type.Literal("blind"), Type.Literal("execution")])),
+        dependsOn: Type.Optional(Type.Array(Type.Integer({ minimum: 0, maximum: 5 }), { maxItems: 5 })),
+      }, { additionalProperties: false }), { minItems: 1, maxItems: 6 }),
+    }, { additionalProperties: false }),
+    execute: async (_callId, params, signal) => {
+      const value = params as { mode: DelegationMode; tasks: AgentTaskRequest[] };
+      return result(await input.delegate(value.mode, value.tasks, signal));
+    },
+  };
 }
 
 export function agentEntryReaderTool(services: ToolServices): RuntimeTool<any> {
@@ -61,7 +93,7 @@ export const researchCapabilityCatalog: ResearchCapabilityDescriptor[] = [
     id: "artifact.read",
     toolName: "read_artifact_excerpt",
     description: "按 URI 和字符范围读取受管文本 Artifact",
-    keywords: ["artifact", "产物", "图表", "审阅报告", "运行日志", "ro-crate"],
+    keywords: ["artifact", "产物", "图表", "结果文件", "实验结果", "审阅报告", "运行日志", "ro-crate"],
     skillNames: ["artifact-inspection"],
   },
   {
@@ -76,24 +108,21 @@ export const researchCapabilityCatalog: ResearchCapabilityDescriptor[] = [
     id: "literature.search",
     toolName: "search_literature",
     description: "检索论文并返回可追溯的短元数据",
-    keywords: ["文献", "论文", "引用", "paper", "literature", "citation", "related work", "研究进展"],
+    keywords: ["文献", "论文", "引用", "paper", "literature", "citation", "related work", "研究进展", "研究现状", "综述", "前人研究", "已有研究", "研究空白", "systematic review"],
     skillNames: ["literature-evidence"],
   },
   {
     id: "wiki.read",
     toolName: "read_project_wiki",
     description: "读取当前项目 Wiki 的最新页面摘要",
-    keywords: ["wiki", "知识库", "笔记", "已有结论", "研究记录"],
+    keywords: ["wiki", "知识库", "项目笔记", "已有结论", "项目记录", "研究记录", "项目沉淀"],
     skillNames: ["project-wiki-navigation"],
   },
-  {
-    id: "ocean.subset.plan",
-    toolName: "plan_ocean_data_subset",
-    description: "规划海洋数据切片并生成只读预检",
-    keywords: ["数据", "argo", "erddap", "copernicus", "nasa", "netcdf", "切片", "下载", "变量", "经纬度", "深度"],
-    skillNames: ["ocean-data-subsetting"],
-  },
 ];
+
+export function researchCapabilityCatalogFor(contributions: readonly ScienceDomainCapabilityContribution[]): ResearchCapabilityDescriptor[] {
+  return [...new Map([...researchCapabilityCatalog, ...contributions].map((capability) => [capability.id, { ...capability }])).values()];
+}
 
 const result = <T,>(value: T) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value) }],
@@ -117,18 +146,26 @@ export function projectContextCapsule(services: ToolServices): string {
   return JSON.stringify(compactProjectContext(services));
 }
 
-export function selectResearchCapabilities(prompt: string): ResearchCapabilityDescriptor[] {
-  const normalized = prompt.toLocaleLowerCase();
-  return researchCapabilityCatalog.filter((capability) => capability.alwaysAvailable || capability.keywords.some((keyword) => normalized.includes(keyword.toLocaleLowerCase())));
+export function selectResearchCapabilities(prompt: string, catalog: readonly ResearchCapabilityDescriptor[] = researchCapabilityCatalog): ResearchCapabilityDescriptor[] {
+  // Deliberately keep routing deterministic and local: semantic intent aliases make
+  // common research language work without spending a model call or exposing every
+  // tool schema. Exact tool selection remains inspectable in the context trace.
+  const normalized = prompt.toLocaleLowerCase().normalize("NFKC").replace(/\s+/g, " ").trim();
+  return catalog.filter((capability) => capability.alwaysAvailable || capability.keywords.some((keyword) => normalized.includes(keyword.toLocaleLowerCase().normalize("NFKC"))));
 }
 
-export function selectResearchTools(prompt: string, services: ToolServices): RuntimeTool<any>[] {
-  return selectResearchCapabilities(prompt).map((capability) => {
+export function selectResearchTools(prompt: string, services: ToolServices, catalog: readonly ResearchCapabilityDescriptor[] = researchCapabilityCatalog): RuntimeTool<any>[] {
+  return createResearchTools(selectResearchCapabilities(prompt, catalog), services);
+}
+
+export function createResearchTools(capabilities: ResearchCapabilityDescriptor[], services: ToolServices): RuntimeTool<any>[] {
+  return capabilities.map((capability) => {
     if (capability.toolName === "read_project_context") return projectContextTool(services);
     if (capability.toolName === "search_literature") return literatureTool(services);
     if (capability.toolName === "read_project_wiki") return wikiTool(services);
     if (capability.toolName === "read_artifact_excerpt") return artifactTool(services);
-    return preflightTool();
+    if (capability.toolName === "plan_ocean_data_subset") return preflightTool();
+    throw new Error(`Science domain capability ${capability.id} has no registered Server tool adapter`);
   });
 }
 
