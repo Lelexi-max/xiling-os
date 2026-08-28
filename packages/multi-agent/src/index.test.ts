@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { AgentRoleRegistry, MultiAgentOrchestrator, createChildAccessPolicy, evaluateDelegationNeed, extractTaskResultText, type DelegationStore, type StoredDelegation } from "./index.js";
+import { AgentRoleRegistry, MultiAgentOrchestrator, createChildAccessPolicy, evaluateDelegationNeed, extractTaskResultText, taskObjectiveWithProfile, type AgentRoleSpec, type DelegationStore, type StoredDelegation } from "./index.js";
+
+const TEST_ROLES: AgentRoleSpec[] = [
+  { id: "research-explorer", title: "explorer", description: "explore", systemPrompt: "explore", allowedCapabilities: [], defaultIsolation: "scoped", canDelegate: false },
+  { id: "domain-executor", title: "executor", description: "execute", systemPrompt: "execute", allowedCapabilities: [], defaultIsolation: "execution", canDelegate: false },
+  { id: "independent-reviewer", title: "reviewer", description: "review", systemPrompt: "review", allowedCapabilities: [], defaultIsolation: "blind", canDelegate: false },
+];
+const roleRegistry = () => new AgentRoleRegistry(TEST_ROLES);
 
 class MemoryStore implements DelegationStore {
   records = new Map<string, StoredDelegation>();
@@ -28,14 +35,14 @@ describe("multi-agent research orchestration", () => {
         active -= 1;
         return { status: "completed", ...extractTaskResultText(JSON.stringify({ summary: `完成 ${input.objective}`, sourceUris: [`https://example.test/${input.role.id}`], artifactUris: [], limitations: ["离线 fixture"] })) };
       },
-    }, new AgentRoleRegistry(), { maxConcurrency: 2 });
+    }, roleRegistry(), { maxConcurrency: 2 });
     const results = await orchestrator.delegate({
       projectId: "ocean", parentRunId: "parent", mode: "parallel",
       contextManifest: { projectId: "ocean", projectBriefRevision: "v1", researchEntityIds: ["question"], sourceUris: [], projectionHash: "hash" },
       tasks: [
-        { roleId: "literature-scout", objective: "track-a" },
-        { roleId: "skeptical-reviewer", objective: "track-b" },
-        { roleId: "evidence-curator", objective: "track-c" },
+        { roleId: "research-explorer", objective: "track-a" },
+        { roleId: "independent-reviewer", objective: "track-b", reviewProfile: "adversarial" },
+        { roleId: "domain-executor", objective: "track-c" },
       ],
     });
     expect(peak).toBe(2);
@@ -45,7 +52,7 @@ describe("multi-agent research orchestration", () => {
   });
 
   it("rejects recursion and only recommends delegation with a bounded contract", () => {
-    const registry = new AgentRoleRegistry();
+    const registry = roleRegistry();
     expect(() => registry.register({ id: "recursive", title: "bad", description: "bad", systemPrompt: "bad", allowedCapabilities: [], defaultIsolation: "scoped", canDelegate: true as never })).toThrow("recursion");
     expect(evaluateDelegationNeed({ independentTracks: 3, hasOutputContract: true }).delegate).toBe(true);
     expect(evaluateDelegationNeed({ independentTracks: 3, hasOutputContract: false }).delegate).toBe(false);
@@ -63,11 +70,11 @@ describe("multi-agent research orchestration", () => {
         input.onRunStarted("child-run");
         return { status: "completed", ...extractTaskResultText(JSON.stringify({ summary: "已核验", sourceUris: ["artifact://result"], artifactUris: ["artifact://result"], limitations: [] })) };
       },
-    });
+    }, roleRegistry());
     const request = {
       projectId: "ocean", parentRunId: "parent", mode: "single" as const,
       contextManifest: { projectId: "ocean", projectBriefRevision: "v1", researchEntityIds: [], sourceUris: [], projectionHash: "projection" },
-      tasks: [{ roleId: "reproducibility-auditor", objective: "核验复现包" }],
+      tasks: [{ roleId: "independent-reviewer", objective: "核验复现包", reviewProfile: "reproducibility" as const }],
     };
     const first = await orchestrator.delegate(request);
     const retried = await orchestrator.delegate(request);
@@ -88,11 +95,11 @@ describe("multi-agent research orchestration", () => {
           controller.abort();
         });
       },
-    });
+    }, roleRegistry());
     const [result] = await orchestrator.delegate({
       projectId: "ocean", parentRunId: "parent-cancel", mode: "single", signal: controller.signal,
       contextManifest: { projectId: "ocean", projectBriefRevision: "v1", researchEntityIds: [], sourceUris: [], projectionHash: "projection" },
-      tasks: [{ roleId: "literature-scout", objective: "取消检索" }],
+      tasks: [{ roleId: "research-explorer", objective: "取消检索" }],
     });
     expect(result?.status).toBe("cancelled");
     expect([...store.records.values()][0]?.status).toBe("cancelled");
@@ -108,10 +115,16 @@ describe("multi-agent research orchestration", () => {
     expect(() => extractTaskResultText(JSON.stringify({ summary: "x", sourceUris: [], artifactUris: [], limitations: [], hidden: "leak" }))).toThrow("schema");
   });
 
+  it("applies one dynamic review rubric instead of multiplying reviewer roles", () => {
+    expect(taskObjectiveWithProfile({ roleId: "independent-reviewer", objective: "核验结果", reviewProfile: "evidence" })).toContain("来源定位");
+    expect(taskObjectiveWithProfile({ roleId: "independent-reviewer", objective: "核验结果", reviewProfile: "reproducibility" })).toContain("环境 digest");
+    expect(() => taskObjectiveWithProfile({ roleId: "research-explorer", objective: "检索", reviewProfile: "methods" })).toThrow("only valid");
+  });
+
   it("propagates the duration budget as a cancellation token", async () => {
     const store = new MemoryStore();
-    const orchestrator = new MultiAgentOrchestrator(store, { createChildSession: () => "child-timeout", execute: async (input) => { input.onRunStarted("run-timeout"); return new Promise((_resolve, reject) => input.signal?.addEventListener("abort", () => reject(new Error("timeout")), { once: true })); } });
-    const [result] = await orchestrator.delegate({ projectId: "p", parentRunId: "parent", mode: "single", budget: { maxDurationMs: 5 }, contextManifest: { projectId: "p", projectBriefRevision: "v1", researchEntityIds: [], sourceUris: [], projectionHash: "hash" }, tasks: [{ roleId: "literature-scout", objective: "执行超时测试" }] });
+    const orchestrator = new MultiAgentOrchestrator(store, { createChildSession: () => "child-timeout", execute: async (input) => { input.onRunStarted("run-timeout"); return new Promise((_resolve, reject) => input.signal?.addEventListener("abort", () => reject(new Error("timeout")), { once: true })); } }, roleRegistry());
+    const [result] = await orchestrator.delegate({ projectId: "p", parentRunId: "parent", mode: "single", budget: { maxDurationMs: 5 }, contextManifest: { projectId: "p", projectBriefRevision: "v1", researchEntityIds: [], sourceUris: [], projectionHash: "hash" }, tasks: [{ roleId: "research-explorer", objective: "执行超时测试" }] });
     expect(result?.status).toBe("cancelled");
   });
 });

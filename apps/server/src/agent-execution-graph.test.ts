@@ -69,7 +69,7 @@ describe("Agent Execution Graph projector", () => {
       store.appendEntry(child.id, childRun.id, { kind: "user", role: "user", text: childRun.prompt });
       store.appendEntry(child.id, childRun.id, { kind: "assistant", role: "assistant", text: "发现证据不足。" });
       store.transitionRun(childRun.id, "completed");
-      store.createDelegation({ id: "delegation-review", projectId: "ocean-project", rootRunId: run.id, parentRunId: run.id, childSessionId: child.id, childRunId: childRun.id, roleId: "skeptical-reviewer", objective: "独立审查结论", isolation: "blind", contextManifestHash: "b".repeat(64), contextManifest: { entities: ["claim"] }, budget: {}, status: "completed", result: { summary: "发现证据不足" } });
+      store.createDelegation({ id: "delegation-review", projectId: "ocean-project", rootRunId: run.id, parentRunId: run.id, childSessionId: child.id, childRunId: childRun.id, roleId: "independent-reviewer", objective: "独立审查结论", isolation: "blind", contextManifestHash: "b".repeat(64), contextManifest: { entities: ["claim"] }, budget: {}, status: "completed", result: { summary: "发现证据不足" } });
 
       const graph = projectAgentExecutionGraph(store, { projectId: "ocean-project", scope: "session", sessionId: session.id });
       expect(graph.counts).toMatchObject({ sessions: 2, runs: 2, delegations: 1 });

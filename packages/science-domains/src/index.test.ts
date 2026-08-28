@@ -8,7 +8,7 @@ describe("science domain registry", () => {
     const resolved = registry.resolve(["test-domain"]);
     expect(resolved.domainIds).toEqual(["general-science", "test-domain"]);
     expect(resolved.capabilities.map((item) => item.id)).toContain("test.plan");
-    expect(resolved.agentRoles.map((item) => item.id)).toContain("literature-scout");
+    expect(resolved.agentRoles.map((item) => item.id)).toEqual(["research-explorer", "domain-executor", "independent-reviewer"]);
     expect(new Set(resolved.agentRoles.map((item) => item.id)).size).toBe(resolved.agentRoles.length);
   });
 

@@ -31,7 +31,15 @@ Pi 核心刻意不内置多智能体；上游 `subagent` 示例以独立 Pi 进�
 
 ## 预置角色
 
-`literature-scout`、`evidence-curator`、`data-steward`、`ocean-analyst`、`reproducibility-auditor`、`skeptical-reviewer`。最终综合与用户沟通由 Research Director 完成。
+只保留三个稳定基础角色：
+
+- `research-explorer`：文献、多数据源与竞争假说探索，默认 `scoped`。
+- `domain-executor`：按当前项目领域提示规划或核验执行，默认 `execution`；领域包提供能力与约束，不再各自复制角色。
+- `independent-reviewer`：默认 `blind`，按任务动态选择 `evidence`、`reproducibility`、`methods` 或 `adversarial` 审查清单。
+
+数据规划优先由确定性预检和 Approval Gate 完成；证据、复现和方法差异属于审查清单，而不是额外人格。委派工具按当前 prompt 只暴露命中的 1–3 个角色。最终综合与用户沟通由 Research Director 完成。
+
+2026-08-28 以前的六角色目录已删除；`@xiling/multi-agent` 不再内置另一份角色常量，角色唯一事实源是 `general-science` Manifest。
 
 ## 验证
 

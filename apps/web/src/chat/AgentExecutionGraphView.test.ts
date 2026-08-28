@@ -60,7 +60,7 @@ describe("Flow-style Agent conversation canvas", () => {
       raw({ id: "session:child", kind: "session", title: "反方审稿", source: { sessionId: "child" } }),
       raw({ id: "run:child-run", kind: "run", title: "独立审查", status: "completed", source: { sessionId: "child", runId: "child-run" } }),
       raw({ id: "entry:child-answer", kind: "message", title: "Agent 回答", summary: "发现证据缺口。", source: { sessionId: "child", runId: "child-run", entryId: "child-answer" } }),
-      raw({ id: "delegation:d1", kind: "delegation", title: "skeptical-reviewer", summary: "独立审查结论", status: "completed", source: { runId: "run-1", delegationId: "d1" }, parentRunId: "run-1", childRunId: "child-run", childSessionId: "child" }),
+      raw({ id: "delegation:d1", kind: "delegation", title: "independent-reviewer", summary: "独立审查结论", status: "completed", source: { runId: "run-1", delegationId: "d1" }, parentRunId: "run-1", childRunId: "child-run", childSessionId: "child" }),
     );
     const canvas = buildConversationCanvas(graph);
     expect(canvas.nodes.filter((node) => node.data.displayKind === "agent-task")).toHaveLength(1);

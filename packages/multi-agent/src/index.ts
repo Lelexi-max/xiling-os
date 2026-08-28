@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 export type AgentIsolation = "scoped" | "blind" | "execution";
 export type DelegationMode = "single" | "parallel" | "chain";
 export type DelegationStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "suspended";
+export type ReviewProfile = "evidence" | "reproducibility" | "methods" | "adversarial";
 
 export interface AgentRoleSpec {
   id: string;
@@ -10,6 +11,7 @@ export interface AgentRoleSpec {
   description: string;
   systemPrompt: string;
   allowedCapabilities: string[];
+  includeDomainCapabilities?: boolean;
   defaultIsolation: AgentIsolation;
   canDelegate: false;
   dynamic?: boolean;
@@ -34,6 +36,7 @@ export interface AgentTaskRequest {
   objective: string;
   isolation?: AgentIsolation;
   dependsOn?: number[];
+  reviewProfile?: ReviewProfile;
 }
 
 export interface AgentTaskResult {
@@ -113,32 +116,22 @@ export function createChildAccessPolicy(manifest: ContextManifest, isolation: Ag
   };
 }
 
-export const PRESET_RESEARCH_AGENT_ROLES: readonly AgentRoleSpec[] = [
-  {
-    id: "literature-scout", title: "文献检索员", description: "设计检索式、覆盖不同数据库并返回去重候选文献。",
-    systemPrompt: `你是汐灵 OS 的文献检索子智能体。优先扩大检索覆盖并保留 DOI、URL 和来源，不把候选论文冒充已核验证据。${commonContract}`,
-    allowedCapabilities: ["project.read", "literature.search"], defaultIsolation: "scoped", canDelegate: false,
-  },
-  {
-    id: "evidence-curator", title: "证据审查员", description: "核对来源片段并提出支持、反驳、限定或证据不足判断。",
-    systemPrompt: `你是汐灵 OS 的证据审查子智能体。每项判断必须回链来源片段，明确适用范围、置信度和证据缺口。${commonContract}`,
-    allowedCapabilities: ["project.read", "literature.search", "artifact.read"], defaultIsolation: "blind", canDelegate: false,
-  },
-  {
-    id: "reproducibility-auditor", title: "复现审计员", description: "审计输入、代码、环境、哈希、RO-Crate 与重跑条件。",
-    systemPrompt: `你是汐灵 OS 的复现审计子智能体。核对输入快照、环境、代码、参数、随机性、Artifact 哈希与缺失溯源，不替执行者修饰结果。${commonContract}`,
-    allowedCapabilities: ["project.read", "artifact.read"], defaultIsolation: "blind", canDelegate: false,
-  },
-  {
-    id: "skeptical-reviewer", title: "反方审稿员", description: "盲审结论、方法、统计假设和过度推断。",
-    systemPrompt: `你是汐灵 OS 的反方审稿子智能体。主动寻找替代解释、选择偏差、统计误用、证据断裂和不可复现环节；不知道主智能体偏好的结论。${commonContract}`,
-    allowedCapabilities: ["project.read", "artifact.read", "literature.search"], defaultIsolation: "blind", canDelegate: false,
-  },
-] as const;
+const reviewRubrics: Record<ReviewProfile, string> = {
+  evidence: "证据审查清单：逐项核对来源定位、原文与解释边界、支持/反驳/限定关系、适用范围、置信度和证据缺口。",
+  reproducibility: "复现审查清单：核对输入快照、代码版本、参数、随机种子、环境 digest、资源/网络策略、Artifact 哈希和重跑条件。",
+  methods: "方法审查清单：核对研究设计、样本与偏差、单位和数据质量、统计假设、对照、敏感性分析及结论适用范围。",
+  adversarial: "反方审查清单：寻找替代解释、选择偏差、混杂、统计误用、证据断裂、不可复现环节和过度推断。",
+};
+
+export function taskObjectiveWithProfile(task: AgentTaskRequest): string {
+  if (task.reviewProfile && task.roleId !== "independent-reviewer") throw new Error("Review profiles are only valid for independent-reviewer");
+  if (task.roleId !== "independent-reviewer") return task.objective;
+  return `${task.objective}\n${reviewRubrics[task.reviewProfile ?? "adversarial"]}`;
+}
 
 export class AgentRoleRegistry {
   private readonly roles = new Map<string, AgentRoleSpec>();
-  constructor(roles: readonly AgentRoleSpec[] = PRESET_RESEARCH_AGENT_ROLES) {
+  constructor(roles: readonly AgentRoleSpec[] = []) {
     for (const role of roles) this.register(role);
   }
   register(role: AgentRoleSpec): void {
@@ -212,12 +205,13 @@ export class MultiAgentOrchestrator {
     const role = this.roles.get(input.task.roleId);
     if (!role) throw new Error(`Unknown Agent role: ${input.task.roleId}`);
     const isolation = input.task.isolation ?? role.defaultIsolation;
+    const objective = taskObjectiveWithProfile(input.task);
     const manifestHash = createHash("sha256").update(JSON.stringify(input.contextManifest)).digest("hex");
-    const delegationId = createHash("sha256").update(JSON.stringify([input.parentRunId, input.index, role.id, input.task.objective, isolation, manifestHash])).digest("hex").slice(0, 40);
+    const delegationId = createHash("sha256").update(JSON.stringify([input.parentRunId, input.index, role.id, objective, isolation, manifestHash])).digest("hex").slice(0, 40);
     const existing = this.store.getDelegation?.(delegationId);
     if (existing?.status === "completed" && existing.result) return structuredClone(existing.result as AgentTaskResult);
     const childSessionId = existing?.childSessionId ?? this.executor.createChildSession(input.projectId);
-    if (!existing) this.store.createDelegation({ id: delegationId, projectId: input.projectId, rootRunId: input.rootRunId, parentRunId: input.parentRunId, childSessionId, roleId: role.id, objective: input.task.objective, isolation, contextManifestHash: manifestHash, contextManifest: input.contextManifest, budget: input.budget });
+    if (!existing) this.store.createDelegation({ id: delegationId, projectId: input.projectId, rootRunId: input.rootRunId, parentRunId: input.parentRunId, childSessionId, roleId: role.id, objective, isolation, contextManifestHash: manifestHash, contextManifest: input.contextManifest, budget: input.budget });
     else this.store.updateDelegation(delegationId, { status: "queued" });
     let childRunId: string | undefined;
     let acquired = false;
@@ -228,7 +222,7 @@ export class MultiAgentOrchestrator {
     try {
       await this.acquire(taskController.signal);
       acquired = true;
-      const execution = await this.executor.execute({ delegationId, projectId: input.projectId, rootRunId: input.rootRunId, parentRunId: input.parentRunId, childSessionId, role, objective: input.task.objective, isolation, contextManifest: input.contextManifest, budget: input.budget, signal: taskController.signal, onRunStarted: (runId) => { childRunId = runId; this.store.updateDelegation(delegationId, { status: "running", childRunId: runId }); } });
+      const execution = await this.executor.execute({ delegationId, projectId: input.projectId, rootRunId: input.rootRunId, parentRunId: input.parentRunId, childSessionId, role, objective, isolation, contextManifest: input.contextManifest, budget: input.budget, signal: taskController.signal, onRunStarted: (runId) => { childRunId = runId; this.store.updateDelegation(delegationId, { status: "running", childRunId: runId }); } });
       if (input.budget.maxCost !== undefined && (execution.usage?.cost ?? 0) > input.budget.maxCost) throw new Error("Delegation cost budget exceeded");
       const result: AgentTaskResult = { delegationId, roleId: role.id, childSessionId, ...(childRunId ? { childRunId } : {}), ...execution };
       this.store.updateDelegation(delegationId, { status: result.status, ...(childRunId ? { childRunId } : {}), result, ...(result.error ? { error: result.error } : {}) });

@@ -22,7 +22,7 @@ import { CredentialStore } from "@xiling/credentials";
 import { LocalArtifactStore, type ArtifactRegistry } from "@xiling/artifacts";
 import { ExecutionCoordinator, SqliteExecutionRepository } from "@xiling/execution";
 import { DockerConnectorProbe, DockerConnectorRunner } from "./connector-runner.js";
-import { agentEntryReaderTool, agentHistorySearchTool, createResearchTools, researchCapabilityCatalog, researchCapabilityCatalogFor, researchDelegationTool, selectResearchCapabilities, selectResearchTools, shouldOfferResearchDelegation } from "./agent-tools.js";
+import { agentEntryReaderTool, agentHistorySearchTool, createResearchTools, researchCapabilityCatalog, researchCapabilityCatalogFor, researchDelegationTool, roleAllowsCapability, selectDelegationRoles, selectResearchCapabilities, selectResearchTools, shouldOfferResearchDelegation } from "./agent-tools.js";
 import { FixtureProjectAnalysisRunner, ProjectWorkflowService, SqliteProjectWorkflowRepository, type ProjectAnalysisRunner } from "./project-workflow.js";
 import { registerLiteratureRoutes } from "./modules/literature/routes.js";
 import { registerWorkspaceRoutes } from "./modules/workspace/routes.js";
@@ -208,13 +208,14 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
       if (!session || session.projectId !== activeProject.id) throw new Error("Agent session project mismatch");
       const activeDomain = scienceDomains.resolve(activeProject.domainIds);
       const activeCapabilityCatalog = researchCapabilityCatalogFor(activeDomain.capabilities);
+      const domainCapabilityIds = new Set(activeDomain.capabilities.map((capability) => capability.id));
       const allowedRoleIds = new Set(activeDomain.agentRoles.map((role) => role.id));
       const childRole = command.multiAgent && allowedRoleIds.has(command.multiAgent.roleId) ? agentRoles.get(command.multiAgent.roleId) : undefined;
       if (command.multiAgent && !childRole) throw new Error("Unknown delegated Agent role");
       if (command.multiAgent && command.multiAgent.contextManifest.projectId !== activeProject.id) throw new Error("Delegated ContextManifest project mismatch");
       const childAccess = command.multiAgent ? createChildAccessPolicy(command.multiAgent.contextManifest, command.multiAgent.isolation) : undefined;
       const activeCapabilities = childRole
-        ? activeCapabilityCatalog.filter((capability) => childRole.allowedCapabilities.includes(capability.id) && !(command.multiAgent?.isolation !== "scoped" && ["project.read", "wiki.read"].includes(capability.id)))
+        ? activeCapabilityCatalog.filter((capability) => roleAllowsCapability(childRole, capability.id, domainCapabilityIds) && !(command.multiAgent?.isolation !== "scoped" && ["project.read", "wiki.read"].includes(capability.id)))
         : selectResearchCapabilities(prompt, activeCapabilityCatalog);
       const scopedArtifactReader = (uri: string, offset: number, max: number) => { childAccess?.assertSource(uri); return readManagedArtifact(activeProject.id, uri, offset, max); };
       let activeTools = childRole
@@ -310,8 +311,9 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
         },
       })];
       if (!childRole && shouldOfferResearchDelegation(prompt)) {
+        const delegationRoles = selectDelegationRoles(prompt, activeDomain.agentRoles);
         activeTools = [...activeTools, researchDelegationTool({
-          roles: activeDomain.agentRoles,
+          roles: delegationRoles,
           delegate: async (mode: DelegationMode, tasks: AgentTaskRequest[], signal?: AbortSignal) => multiAgentOrchestrator.delegate({
             projectId: activeProject.id,
             parentRunId: runId,

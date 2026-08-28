@@ -1,10 +1,10 @@
-import { DOMAIN_AGENT_HANDOFF_CONTRACT, type ScienceDomainManifest } from "@xiling/science-domains";
+import type { ScienceDomainManifest } from "@xiling/science-domains";
 
 export const TABULAR_EXPERIMENT_DOMAIN: ScienceDomainManifest = {
   id: "tabular-experiment", version: "1.0.0", title: "表格实验科学", description: "面向实验室 CSV/TSV 测量、分组统计、质量控制与复现报告。", disciplines: ["experimental-science", "statistics"],
   promptFragments: ["本项目启用了表格实验领域包。检查单位、缺失值、重复测量、批次效应、异常值规则、样本量与统计假设。"],
   capabilities: [{ id: "tabular.inspect", toolName: "read_artifact_excerpt", description: "按需读取实验表格片段并规划描述统计", keywords: ["csv", "tsv", "表格", "实验", "均值", "标准差", "批次"], skillNames: [] }],
-  agentRoles: [{ id: "tabular-methodologist", title: "实验统计方法员", description: "审查表格实验设计、质量与统计方法。", systemPrompt: `你是表格实验统计子智能体。检查缺失值、重复测量、批次效应和统计假设。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["project.read", "tabular.inspect"], defaultIsolation: "execution", canDelegate: false }],
+  agentRoles: [],
   connectorKinds: ["local-csv", "local-tsv"], artifactKinds: ["tabular-dataset", "statistical-summary", "quality-report"], schemaNamespaces: ["tabular", "experimental"],
 };
 

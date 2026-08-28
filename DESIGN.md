@@ -231,7 +231,7 @@ sequenceDiagram
 - `SourceContentResolver` 只在投影命中后按 source kind 解析 Agent Entry、Evidence 原文、Provider 摘要、Wiki Revision、Workflow 或受管 Artifact；每段上下文显式标记“原文/摘要/解释”，禁止把节点展示摘要伪装成来源原文。
 - Scientific Canvas、Agent Execution Graph 与 Pi Session Tree 不做 1:1 映射；移动和布局不改变科研事实或追加式执行事实。
 - Agent 生成的 Wiki 草稿必须携带 source/run/evidence 溯源，发布继续经过用户确认。
-- Research Director 负责最终综合；预置子 Agent 只完成独立检索、证据、数据、分析、复现或盲审任务，结果进入 Research Graph 前仍走 proposal/approval。
+- Research Director 负责最终综合；仅预置 Research Explorer、Domain Executor、Independent Reviewer 三个基础角色，并按任务只暴露命中角色。证据、复现、方法与反方差异使用动态审查 rubric，结果进入 Research Graph 前仍走 proposal/approval。
 
 详细机制见 [上下文经济架构](docs/architecture/context-budget.md)和[多智能体科研编排](docs/architecture/multi-agent.md)。MCP 已通过独立 Host 接入：无配置时不启动子进程，任务未命中时不激活代理工具，具体工具 schema 由 adapter 缓存并按 search/describe 获取。
 
@@ -509,8 +509,9 @@ R0–R8 现代化开发同时受[科研内核架构宪法](docs/architecture/res
 
 - **2026-08-28**：进入 Research OS Modernization R0/R1：建立科研内核架构宪法、黄金科研任务和确定性离线门禁；正式 Workspace API 切换为 `/api/v1`，项目契约改名为 `ResearchProject`；删除 Gate 3 Snapshot、Knowledge `chat_messages`、旧消息回退/导入和 Gate 4.5-C 迁移备份路径，Chat 消息只由 Agent Store 持有。
 - **2026-08-28**：完成 R2 Artifact 基础：新增独立内容寻址 Registry、项目级元数据和生命周期；Workflow 的 Dataset、分析输出和 RO-Crate 在提交前统一注册为 `artifact://sha256/...`，Web/API/Agent 不再读取 Workflow 临时目录。
-- **2026-08-28**：完成 R3–R7 本地架构切片：新增通用 Execution Plan/Spec/Approval/Receipt 与 SQLite 幂等协调；上下文 trace 记录 token 组成、来源覆盖和历史去重；盲审/执行子智能体改为严格 ContextManifest 与 JSON Handoff；新增“需要关注”视图；以表格实验领域验证核心不依赖海洋类型。确定性离线门禁现为 17 个包、33 个测试文件、144 项测试。
+- **2026-08-28**：完成 R3–R7 本地架构切片：新增通用 Execution Plan/Spec/Approval/Receipt 与 SQLite 幂等协调；上下文 trace 记录 token 组成、来源覆盖和历史去重；盲审/执行子智能体改为严格 ContextManifest 与 JSON Handoff；新增“需要关注”视图；以表格实验领域验证核心不依赖海洋类型。确定性离线门禁现为 17 个包、33 个测试文件、145 项测试。
 - **2026-08-28**：补齐 R8 的 macOS 容器部分：Runner 从固定 Python 基础镜像构建，基础分析、Argo 科研闭环与四连接器适配器均在 `--network none` 下通过；真实 Windows 11/WSL2、签名介质和真实科研试用仍保持发布阻塞，未以本地结果冒充完成。
+- **2026-08-28**：精简多智能体目录：六个重叠角色收敛为研究探索、领域执行、独立审查三个基础角色；审查差异改为动态 rubric，领域约束来自项目 Manifest；委派工具只暴露当前意图命中的角色，并删除 `multi-agent` 包内重复角色事实源。
 - **2026-08-27**：Agent 运行图改为 Flowith 式低密度对话画布：默认当前 Session，每轮只显示研究指令与关键回答，执行细节折叠；新增沿节点继续、组合引用、祖先路径聚焦、自由拖动、项目全景与画布内 Composer。
 - **2026-08-27**：完成科研真实性与人机功效纠偏：Claim/ClaimRevision 采用待审提案写入；Evidence 保存精确摘录、定位、局限并以 `ASSERTS` 指向具体主张版本；Context 新增按需 `SourceContentResolver`；项目运行改读正式 Workflow、Chat 改读真实 Artifact；科研画布增加一跳聚焦、关系筛选和来源跳转；删除旧 Gate 3 路由、Web 视图、聚合包和 Server 依赖。
 - **2026-08-27**：完成 RG-5 本地收口：旧 Canvas 类型化文档契约和测试一并撤下；Wiki、Chat、文献工作台与 Scientific Canvas 只经 Research Graph/Agent Store/Knowledge 窄边界协作；127 项测试、完整 smoke、生产构建与 4317/4318 浏览器验收通过。真实 Windows 11/WSL2、签名安装介质和真实科研试用继续作为发布门禁。

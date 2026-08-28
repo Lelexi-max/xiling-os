@@ -22,6 +22,8 @@ Pi Agent Core 负责每个 Agent 内部的模型与工具循环、事件和取�
 
 模型只能提出委派；宿主校验角色、任务数、依赖、预算、权限和未决审批。首版单层、最多并发 3、每个父任务最多 6 个子任务。
 
+角色目录保持最小：Research Explorer、Domain Executor、Independent Reviewer。宿主再按本轮意图只把命中的角色写入委派工具 schema；证据、复现、方法和反方审查以动态 rubric 表达，不增加常驻 Agent。领域 Manifest 贡献提示、能力和工具，不复制“海洋分析员”“统计方法员”等人格。
+
 ## 3. 上下文协议
 
 `ContextManifest` 只记录项目、项目简报版本、显式科研实体、受管来源 URI 与 projection hash。子 Runtime 重新通过 Context Broker 解析该清单，不复制父对话历史。每个子 session 独立压缩，完整输出保留在 Agent Store；父 Agent 只接收结构化摘要、来源、Artifact、局限与 usage。
@@ -46,6 +48,6 @@ Research Graph 不加入 Delegation 节点。被接受的子结果通过原有�
 
 ## 7. 后续阶段
 
-- MA-3：将 Evidence、Data、Analysis、Reproducibility 角色接入真实 proposal/Runner 结果契约。
+- MA-3：将动态 Evidence/Reproducibility/Methods rubric 与 proposal/Runner 结果契约进一步结构化连接。
 - MA-4：允许用户从经审计基础角色 + 领域 Skill + capability allowlist 创建一次性动态角色。
 - MA-5：模型多样性、盲审相关性评测、真实 Windows WSL2 负载与恢复验证。

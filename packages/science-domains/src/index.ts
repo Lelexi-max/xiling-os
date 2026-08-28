@@ -14,6 +14,7 @@ export interface ScienceDomainAgentRoleContribution {
   description: string;
   systemPrompt: string;
   allowedCapabilities: string[];
+  includeDomainCapabilities?: boolean;
   defaultIsolation: "scoped" | "blind" | "execution";
   canDelegate: false;
 }
@@ -53,10 +54,9 @@ export const GENERAL_SCIENCE_DOMAIN: ScienceDomainManifest = {
   promptFragments: ["你服务于一个科学研究项目。遵守可证伪性、来源可追踪、方法透明、计算可复现和不确定性披露原则；不得把模型生成内容冒充实验证据。"],
   capabilities: [],
   agentRoles: [
-    { id: "literature-scout", title: "文献检索员", description: "设计检索式、覆盖不同数据库并返回去重候选文献。", systemPrompt: `你是汐灵 OS 的跨学科文献检索子智能体。保留 DOI、URL 和数据来源，不把候选论文冒充已核验证据。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["project.read", "literature.search"], defaultIsolation: "scoped", canDelegate: false },
-    { id: "evidence-curator", title: "证据审查员", description: "核对来源片段并提出支持、反驳、限定或证据不足判断。", systemPrompt: `你是汐灵 OS 的跨学科证据审查子智能体。每项判断必须回链来源片段，明确适用范围、置信度和证据缺口。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["project.read", "literature.search", "artifact.read"], defaultIsolation: "blind", canDelegate: false },
-    { id: "reproducibility-auditor", title: "复现审计员", description: "审计输入、代码、环境、哈希与重跑条件。", systemPrompt: `你是汐灵 OS 的跨学科复现审计子智能体。核对输入快照、环境、代码、参数、随机性、Artifact 哈希与缺失溯源。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["project.read", "artifact.read"], defaultIsolation: "blind", canDelegate: false },
-    { id: "skeptical-reviewer", title: "反方审稿员", description: "盲审结论、方法、统计假设和过度推断。", systemPrompt: `你是汐灵 OS 的跨学科反方审稿子智能体。主动寻找替代解释、选择偏差、统计误用、证据断裂和不可复现环节。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["project.read", "artifact.read", "literature.search"], defaultIsolation: "blind", canDelegate: false },
+    { id: "research-explorer", title: "研究探索员", description: "对文献、数据源或竞争假说进行可独立验收的并行探索。", systemPrompt: `你是汐灵 OS 的研究探索子智能体。扩大检索覆盖、保留 DOI/URL/数据来源，区分候选材料与已核验证据，不替 Research Director 综合定论。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["project.read", "literature.search", "artifact.read"], defaultIsolation: "scoped", canDelegate: false },
+    { id: "domain-executor", title: "领域执行员", description: "在执行隔离中按当前项目领域约束规划或核验计算。", systemPrompt: `你是汐灵 OS 的领域执行子智能体。严格遵守当前项目领域提示，核对输入、单位、方法、参数、环境和输出溯源；有副作用的动作必须停在审批边界。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["project.read", "artifact.read"], includeDomainCapabilities: true, defaultIsolation: "execution", canDelegate: false },
+    { id: "independent-reviewer", title: "独立审查员", description: "按证据、复现、方法或反方清单进行隔离审查。", systemPrompt: `你是汐灵 OS 的独立审查子智能体。只依据声明来源执行指定审查清单，主动报告证据断裂、不确定性和替代解释，不接触主智能体偏好。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["artifact.read", "literature.search"], defaultIsolation: "blind", canDelegate: false },
   ],
   connectorKinds: ["literature"],
   artifactKinds: ["document", "table", "figure", "code", "dataset", "provenance", "review"],

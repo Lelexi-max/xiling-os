@@ -31,7 +31,7 @@ describe("Agent Execution Graph API", () => {
       expect((await app.inject({ method: "GET", url: `/api/agent-center/graph?projectId=other-project&scope=session&sessionId=${sessionId}` })).statusCode).toBe(404);
       const roles = await app.inject({ method: "GET", url: "/api/agent-center/roles" });
       expect(roles.statusCode).toBe(200);
-      expect(roles.json().roles).toEqual(expect.arrayContaining([expect.objectContaining({ id: "literature-scout", defaultIsolation: "scoped" }), expect.objectContaining({ id: "skeptical-reviewer", defaultIsolation: "blind" })]));
+      expect(roles.json().roles).toEqual(expect.arrayContaining([expect.objectContaining({ id: "research-explorer", defaultIsolation: "scoped" }), expect.objectContaining({ id: "domain-executor", defaultIsolation: "execution" }), expect.objectContaining({ id: "independent-reviewer", defaultIsolation: "blind" })]));
       expect(JSON.stringify(roles.json())).not.toContain("systemPrompt");
     } finally { await app.close(); }
   });
