@@ -91,9 +91,9 @@ pnpm start
 
 默认连接器使用离线 fixture，不会因为填写凭据就自动访问公网。真实连接器需要显式设置 `XILING_CONNECTOR_MODE=live`，并在应用内完成预检和审批。
 
-### Windows 11
+### Windows 11（WSL2 后端；不支持原生科研后端）
 
-首版采用 Windows 原生启动层 + WSL2 后端。不要把活动数据库、`node_modules` 或高频科研数据放在 `/mnt/c`；使用仓库提供的脚本检查并启动：
+汐灵不把原生 Windows Node/Python/容器执行作为支持目标。Windows 只提供轻量 PowerShell 启动与诊断体验，Node 服务、SQLite、活动项目和科研 Runner 全部运行在 WSL2/Linux 中。不要把活动数据库、`node_modules` 或高频科研数据放在 `/mnt/c`；使用仓库提供的脚本检查并启动：
 
 ```powershell
 .\scripts\windows\xiling-doctor.ps1
@@ -149,4 +149,4 @@ DESIGN.md                 当前架构与产品决策的首要入口
 
 ## 状态与边界
 
-这是个人研究者优先的本地 Beta 候选，不是云端多租户协作平台。Windows 首版不承诺完全原生 Python/Node 科研后端；R、SSH/Slurm、多人协作、中国受限数据源、Windows ARM 和签名/WinGet 正式安装包仍是后续工作。真实 Windows 11 + WSL2 专机验收完成前，不应将本仓库视为生产发布版。
+这是个人研究者优先的本地 Beta 候选，不是云端多租户协作平台。Windows 原生 Python/Node 科研后端不在支持范围内；R、SSH/Slurm、多人协作、中国受限数据源、Windows ARM 和签名/WinGet 正式安装包仍是后续工作。真实 Windows 11 + WSL2 专机验收完成前，不应将本仓库视为生产发布版。

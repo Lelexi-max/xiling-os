@@ -500,6 +500,7 @@ R0–R8 现代化开发同时受[科研内核架构宪法](docs/architecture/res
 - [ADR 0035：通用执行内核与领域组合边界](docs/adr/0035-generic-execution-and-domain-composition.md)
 - [ADR 0036：隔离子智能体与结构化 Handoff](docs/adr/0036-isolated-multi-agent-handoffs.md)
 - [ADR 0037：统一真实模型路由与角色级覆盖](docs/adr/0037-real-model-routing-and-role-overrides.md)
+- [ADR 0038：GitHub 合并门禁与 WSL2 支持边界](docs/adr/0038-github-ci-wsl2-boundary.md)
 - [Gate 4.5：Agent 中枢架构纠偏](docs/gate-4.5-agent-center-correction.md)
 - [架构现代化计划](docs/architecture/modernization-plan.md)
 - [开源复用与许可证矩阵](docs/oss-evaluation.md)
@@ -514,6 +515,7 @@ R0–R8 现代化开发同时受[科研内核架构宪法](docs/architecture/res
 - **2026-08-28**：补齐 R8 的 macOS 容器部分：Runner 从固定 Python 基础镜像构建，基础分析、Argo 科研闭环与四连接器适配器均在 `--network none` 下通过；真实 Windows 11/WSL2、签名介质和真实科研试用仍保持发布阻塞，未以本地结果冒充完成。
 - **2026-08-28**：精简多智能体目录：六个重叠角色收敛为研究探索、领域执行、独立审查三个基础角色；审查差异改为动态 rubric，领域约束来自项目 Manifest；委派工具只暴露当前意图命中的角色，并删除 `multi-agent` 包内重复角色事实源。
 - **2026-08-28**：取消产品离线/真实双模式，模型解析改为 Chat 本轮覆盖、子智能体角色路由、主智能体默认路由三层；设置页拆分 API 连接和模型分配，未配置真实主路由时正式调用明确失败。
+- **2026-08-28**：纠正 GitHub 合并门禁的跨平台边界：hosted CI 只验证 Linux/macOS；Windows 原生 runner 不再被当作产品运行时，真实 Windows 验收改为可选 WSL2 Linux 自托管 runner，避免无 WSL2 机器时 PR 排队。
 - **2026-08-27**：Agent 运行图改为 Flowith 式低密度对话画布：默认当前 Session，每轮只显示研究指令与关键回答，执行细节折叠；新增沿节点继续、组合引用、祖先路径聚焦、自由拖动、项目全景与画布内 Composer。
 - **2026-08-27**：完成科研真实性与人机功效纠偏：Claim/ClaimRevision 采用待审提案写入；Evidence 保存精确摘录、定位、局限并以 `ASSERTS` 指向具体主张版本；Context 新增按需 `SourceContentResolver`；项目运行改读正式 Workflow、Chat 改读真实 Artifact；科研画布增加一跳聚焦、关系筛选和来源跳转；删除旧 Gate 3 路由、Web 视图、聚合包和 Server 依赖。
 - **2026-08-27**：完成 RG-5 本地收口：旧 Canvas 类型化文档契约和测试一并撤下；Wiki、Chat、文献工作台与 Scientific Canvas 只经 Research Graph/Agent Store/Knowledge 窄边界协作；127 项测试、完整 smoke、生产构建与 4317/4318 浏览器验收通过。真实 Windows 11/WSL2、签名安装介质和真实科研试用继续作为发布门禁。
@@ -522,7 +524,7 @@ R0–R8 现代化开发同时受[科研内核架构宪法](docs/architecture/res
 - **2026-08-26**：完成 RG-2 本地耐久投影链：Knowledge/Workflow 同事务 outbox、Agent journal 重放、Research Graph schema v2 applied ledger、启动/查询 reconcile、Workflow SQLite，以及科研计划—审批—数据快照—Run—Artifact—Reviewer—Agent 来源关系；删除旧 ProjectItem/Wiki/Canvas 文件级 settlement。
 - **2026-08-26**：完成 RG-1 本地主路径：旧顶层 Agent Canvas 退出导航，Chat 增加“对话 / 运行图”；项目/当前 Session 图从 Agent Store 的 Session、Run、Operation、Entry、Usage 与 Compaction 有界投影，支持详情、拖动与纵向自动整理，Chat 不再写旧 Canvas。
 - **2026-08-26**：用户确认三图边界与开发期破坏性重构；进入 RG-0。新增 `@xiling/research-graph`、LadybugDB 0.19.1 类型化关系 Schema、冲突证据/Artifact 溯源查询、事务回滚、Checkpoint 和异常退出 WAL 恢复 smoke；旧数据不迁移、不双写。
-- **2026-08-25**：进入 Gate 5 Beta 发布候选；建立独立 GitHub 仓库发布边界、敏感文件排除、三平台 hosted CI、许可证/SBOM 门禁，并把真实 Windows/WSL2 专机、签名安装介质与备份恢复演练保留为正式 Beta 阻塞项。
+- **2026-08-25**：进入 Gate 5 Beta 发布候选；建立独立 GitHub 仓库发布边界、敏感文件排除、Linux/macOS hosted CI、许可证/SBOM 门禁，并把真实 Windows/WSL2 专机、签名安装介质与备份恢复演练保留为正式 Beta 阻塞项。
 - **2026-08-25**：用户确认 Gate 4.5-D；安装 `pi-mcp-adapter@2.27.0`，以独立 Pi Coding Agent Host、单代理 schema、宿主元数据命中、加密凭据和设置页接入 MCP。
 - **2026-08-24**：建立 Gate 4.5 与 ADR-0022；明确当前短命 Agent/Web 持久化只是过渡实现，纠偏前先验证 Pi 会话、压缩与 Harness 原语。
 - **2026-08-24**：完成 Gate 4.5-D 主路径切换：删除旧 Chat 写 API 与 Web retained 真相源；Workflow 改为 durable-first 服务端投影、稳定幂等键与启动 reconcile；删除未进入模型的 branch Capsule 死路径。

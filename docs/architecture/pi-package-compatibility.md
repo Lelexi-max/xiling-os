@@ -39,7 +39,7 @@ flowchart LR
 3. 明确更新兼容基线；未更新时 `pnpm pi:compat` 必须失败。
 4. 运行 `pnpm pi:compat`，覆盖流式事件、工具、取消、模型路由、Skill 懒加载、JSONL Session、Compaction 和 Harness 能力探测。
 5. 对 Session 格式变化生成 dry-run 报告；现有数据迁移必须备份、dual-read、可回滚。
-6. 再运行 `pnpm check`、Windows hosted smoke 与真实 WSL2 发布候选验收。
+6. 再运行 `pnpm check`、Linux/macOS hosted smoke 与真实 WSL2 发布候选验收；不把原生 Windows hosted runner 当作支持目标。
 
 ## 4. Pi Package 资源分级
 

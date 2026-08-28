@@ -45,9 +45,9 @@ Gate 4.5 说明：4.5-B 已完成中枢垂直切片；4.5-C 已完成增量 Comp
 ## CI 矩阵
 
 - Linux：单元、集成、smoke、E2E、许可证、SBOM。
-- Windows hosted runner：TypeScript、PowerShell、路径、编码、SQLite 和打包。
 - macOS：核心、路径、启动和浏览器 smoke。
-- Windows 自托管 runner：真实 WSL2 + Docker 完整闭环，覆盖中文用户名、OneDrive、重启、代理、无 GPU/GPU。
+- Windows 原生 hosted runner 不属于支持目标，不作为合并门禁。
+- WSL2 自托管 runner（可选）：在 Windows 主机的 WSL2 Linux 环境中运行 TypeScript、路径/编码、SQLite、Docker 和完整闭环；标签为 `xiling-wsl2`。
 
 ## 首个科学金标准
 

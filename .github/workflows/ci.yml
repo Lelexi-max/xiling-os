@@ -7,7 +7,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Hosted CI validates the supported native hosts. Windows is not a
+        # native runtime target; its supported path is the WSL2 job below.
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -20,14 +22,29 @@ jobs:
       - run: pnpm test
       - run: pnpm --filter @xiling/web build
       - run: node scripts/platform-smoke.mjs
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/smoke.ps1
       - if: runner.os == 'Linux'
         run: pnpm compliance && pnpm sbom:generate
       - if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with: { name: spdx-sbom, path: build/sbom.spdx.json }
+  # A real Windows acceptance lane must execute inside a WSL2 Linux runner.
+  # Keep it opt-in so repositories without a registered self-hosted runner do
+  # not leave pull requests queued forever. Set the repository variable
+  # XILING_WSL2_RUNNER=true and register a runner with the xiling-wsl2 label.
+  wsl2:
+    if: ${{ vars.XILING_WSL2_RUNNER == 'true' }}
+    runs-on: [self-hosted, linux, x64, xiling-wsl2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.19.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.19.0, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm smoke
+      - run: node scripts/platform-smoke.mjs
   runner:
     runs-on: ubuntu-latest
     steps:

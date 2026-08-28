@@ -145,4 +145,4 @@ RG-3 已接入顶层 Scientific Canvas：五种受限投影、自由拖动、纵
 
 RG-4 已完成文献闭环：真实 Provider 摘要、原文入口、阅读标注、原文摘录、精确定位、解释、局限、立场和置信度随 Evidence 捕获记录持久化；同一论文可产生多条证据。Knowledge outbox 投影 `Paper HAS_FRAGMENT SourceFragment`、`EvidenceAssertion BASED_ON SourceFragment`、`EvidenceAssertion ASSERTS ClaimRevision` 与 `EvidenceAssertion EVALUATES ResearchQuestion`。Claim 新建/修订先生成待审 proposal，用户接受后才写入不可变 ClaimRevision。
 
-RG-5 本地架构与体验收口包括：旧 Canvas/Gate 3 产品面删除，Wiki 读统一项目概览与 Research Graph，科研画布提供自由拖动、纵向层级整理、一跳聚焦、关系筛选和来源跳转；文献发现图保持临时，只有显式证据捕获进入科研图。Hosted Linux/Windows/macOS CI 在源码候选提交后复验；真实 Windows 11/WSL2 仍是正式 Beta 发布门禁。
+RG-5 本地架构与体验收口包括：旧 Canvas/Gate 3 产品面删除，Wiki 读统一项目概览与 Research Graph，科研画布提供自由拖动、纵向层级整理、一跳聚焦、关系筛选和来源跳转；文献发现图保持临时，只有显式证据捕获进入科研图。Hosted Linux/macOS CI 在源码候选提交后复验；真实 Windows 11/WSL2 仍是正式 Beta 发布门禁。

@@ -37,7 +37,7 @@
 - 正式元数据探测已实现：ERDDAP NcML 上界、Argo GDAC 索引估算、Copernicus 官方 dry-run、Harmony capabilities 未给体积时阻止审批；短摘要缓存 15 分钟。
 - Connector 审批记录锁定 fixture/live 模式，代理与自定义 CA 配置和 Provider 凭据一并只经 stdin 注入。
 - ContextProjection 生成稳定哈希并记录 Artifact 去重；Provider usage 进入追加式 TokenLedger，以重复率和缓存命中做回归，不设置正常科研任务的固定 token 限额。
-- Linux/Windows/macOS CI、禁网 Runner smoke、SPDX 2.3 SBOM 和许可证门禁已加入；Windows Doctor 增加 Windows 11、内存、虚拟化、WSL2、Linux 容器、端口、磁盘和网络配置检查。
+- Linux/macOS CI、禁网 Runner smoke、SPDX 2.3 SBOM 和许可证门禁已加入；Windows Doctor 增加 Windows 11、内存、虚拟化、WSL2、Linux 容器、端口、磁盘和网络配置检查。Windows 运行时验证改由 WSL2 自托管门禁承担。
 - 已完成一次用户确认后的 NOAA ERDDAP 真实极小切片：`analysed_sst`、1×2×2，Artifact 7,228 bytes，SHA-256 `1bf83151bd0cc5eaf3dc8180d54971f428e8e28f7b9816af5f46b3d7a9e5d828`；禁网只读 xarray 复核数值有效。
 - 已完成真实取消与恢复：94,165,066 bytes 计划启动后应用级取消返回 HTTP 499，持久化状态为 `cancelled` 且无 Artifact；服务重启后成功任务和取消任务均恢复正确。
 - live 验证发现并修复非 root 请求文件权限、无效统一深度约束、重复 NcML 请求和 429 退避问题。ERDDAP 下载现直接复用官方 griddap REST 协议，由 Runner 构造维度化 URL 并流式写入。
