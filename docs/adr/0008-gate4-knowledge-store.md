@@ -25,4 +25,4 @@
 - 项目与事项创建、状态更新和归档。
 - Wiki 页面创建、版本追加、反向链接和重启恢复。
 - 文献证据去重、固定画布幂等和布局恢复。
-- SQLite 文件不位于 Windows `/mnt/c` 活动目录；Windows hosted runner 继续覆盖编码与数据库测试。
+- SQLite 文件不位于 Windows `/mnt/c` 活动目录；Linux/macOS hosted CI 覆盖通用编码与数据库测试，真实 Windows 路径由 WSL2 自托管门禁覆盖。
