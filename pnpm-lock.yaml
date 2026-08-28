@@ -44,12 +44,12 @@ importers:
       '@xiling/agent-harness':
         specifier: workspace:*
         version: link:../../packages/agent-harness
-      '@xiling/artifacts':
-        specifier: workspace:*
-        version: link:../../packages/artifacts
       '@xiling/api-contracts':
         specifier: workspace:*
         version: link:../../packages/api-contracts
+      '@xiling/artifacts':
+        specifier: workspace:*
+        version: link:../../packages/artifacts
       '@xiling/connectors':
         specifier: workspace:*
         version: link:../../packages/connectors
@@ -148,33 +148,6 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
-  packages/artifacts:
-    dependencies:
-      '@xiling/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-
-  packages/execution:
-    dependencies:
-      '@xiling/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-
-  packages/domain-ocean:
-    dependencies:
-      '@xiling/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@xiling/science-domains':
-        specifier: workspace:*
-        version: link:../science-domains
-
-  packages/domain-tabular:
-    dependencies:
-      '@xiling/science-domains':
-        specifier: workspace:*
-        version: link:../science-domains
-
   packages/api-contracts:
     dependencies:
       '@xiling/contracts':
@@ -186,6 +159,12 @@ importers:
       zod:
         specifier: 4.4.3
         version: 4.4.3
+
+  packages/artifacts:
+    dependencies:
+      '@xiling/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/connectors:
     dependencies:
@@ -209,6 +188,48 @@ importers:
       '@xiling/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/domain-ocean:
+    dependencies:
+      '@xiling/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@xiling/science-domains':
+        specifier: workspace:*
+        version: link:../science-domains
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@22.19.19)(vite@8.2.2(@types/node@22.19.19)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.22.1)(yaml@2.9.0))
+
+  packages/domain-tabular:
+    dependencies:
+      '@xiling/science-domains':
+        specifier: workspace:*
+        version: link:../science-domains
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@22.19.19)(vite@8.2.2(@types/node@22.19.19)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.22.1)(yaml@2.9.0))
+
+  packages/execution:
+    dependencies:
+      '@xiling/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@22.19.19)(vite@8.2.2(@types/node@22.19.19)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.22.1)(yaml@2.9.0))
 
   packages/knowledge:
     dependencies:

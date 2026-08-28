@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FC } from "react";
-import type { AgentInputAttachment, ChatMessageRecord, ContextAssemblyTrace, ResearchProject, ModelRuntimeStatus, ProjectItem, WikiPageDetail } from "@xiling/contracts";
+import type { AgentInputAttachment, ChatMessageRecord, ContextAssemblyTrace, ResearchProject, ModelCatalogEntry, ModelProviderId, ModelRuntimeStatus, ProjectItem, WikiPageDetail } from "@xiling/contracts";
 import type { ProjectResearchWorkflow } from "@xiling/domain-ocean";
 import { useConversations } from "../workspace/ConversationContext.js";
 import { ResearchWorkflowCard } from "./ResearchWorkflowCard.js";
@@ -78,6 +78,9 @@ export function ChatView({ project }: { project: ResearchProject }) {
   const [saveStatus, setSaveStatus] = useState("");
   const [pendingSaveTarget, setPendingSaveTarget] = useState<"task" | "wiki">();
   const [modelRuntime, setModelRuntime] = useState<ModelRuntimeStatus>();
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalogEntry[]>([]);
+  const [configuredModelProviders, setConfiguredModelProviders] = useState<ModelProviderId[]>([]);
+  const [selectedModelKey, setSelectedModelKey] = useState("");
   const [pendingImages, setPendingImages] = useState<PendingNativeImage[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [contextTrace, setContextTrace] = useState<ContextAssemblyTrace>();
@@ -111,7 +114,7 @@ export function ChatView({ project }: { project: ResearchProject }) {
     if (!activeSessionId) { setWorkflows([]); return; }
     void fetch(`/api/v1/research-workflows?projectId=${encodeURIComponent(project.id)}&sessionId=${encodeURIComponent(activeSessionId)}`).then((response) => response.ok ? response.json() : []).then((items) => setWorkflows(items as ProjectResearchWorkflow[]));
   }, [project.id, activeSessionId]);
-  useEffect(() => { void fetch("/api/settings/models").then((response) => response.json()).then((body: { runtime: ModelRuntimeStatus }) => setModelRuntime(body.runtime)); }, []);
+  useEffect(() => { void fetch("/api/settings/models").then((response) => response.json()).then((body: { runtime: ModelRuntimeStatus; catalog: ModelCatalogEntry[]; configuredProviderIds: ModelProviderId[] }) => { const firstConnected = body.catalog.find((model) => body.configuredProviderIds.includes(model.providerId)); setModelRuntime(body.runtime); setModelCatalog(body.catalog); setConfiguredModelProviders(body.configuredProviderIds); setSelectedModelKey(body.runtime.primary ? `${body.runtime.primary.providerId}::${body.runtime.primary.modelId}` : firstConnected ? `${firstConnected.providerId}::${firstConnected.id}` : ""); }); }, []);
   useEffect(() => {
     const clampWidth = () => {
       const width = workbenchRef.current?.getBoundingClientRect().width;
@@ -149,7 +152,10 @@ export function ChatView({ project }: { project: ResearchProject }) {
       };
 
       try {
-        for await (const event of runResearchTurn({ projectId: project.id, sessionId: session.id, prompt, ...(images.length ? { attachments: images.map(nativeImageUpload) } : {}), signal: controller.signal })) {
+        const [selectedProviderId, ...selectedModelParts] = selectedModelKey.split("::");
+        const selectedModelId = selectedModelParts.join("::");
+        const routeOverride = selectedProviderId && selectedModelId && (modelRuntime?.primary?.providerId !== selectedProviderId || modelRuntime.primary.modelId !== selectedModelId) ? { providerId: selectedProviderId as ModelProviderId, modelId: selectedModelId } : undefined;
+        for await (const event of runResearchTurn({ projectId: project.id, sessionId: session.id, prompt, ...(routeOverride ? { modelRoute: routeOverride } : {}), ...(images.length ? { attachments: images.map(nativeImageUpload) } : {}), signal: controller.signal })) {
             if (visibleSessionRef.current !== session.id) continue;
             if (event.type === "run.accepted") {
               setPendingImages([]);
@@ -199,8 +205,13 @@ export function ChatView({ project }: { project: ResearchProject }) {
     onCancel: async () => runAbortRef.current?.abort(),
   });
 
-  const nativeImageEnabled = Boolean(modelRuntime?.ready && modelRuntime.selectedModel?.inputModalities.includes("image"));
-  const attachmentTitle = nativeImageEnabled ? "添加模型原生图像输入" : modelRuntime?.mode === "offline" ? "离线演示模型仅支持文字" : modelRuntime?.ready ? "当前模型未声明原生图像输入" : "请先在设置中选择并连接模型";
+  const selectableModels = modelCatalog.filter((model) => configuredModelProviders.includes(model.providerId));
+  const [selectedProviderId, ...selectedModelParts] = selectedModelKey.split("::");
+  const selectedModelId = selectedModelParts.join("::");
+  const primaryModel = modelRuntime?.primary;
+  const selectedCatalogModel = modelCatalog.find((model) => model.providerId === selectedProviderId && model.id === selectedModelId) ?? (primaryModel && primaryModel.providerId === selectedProviderId && primaryModel.modelId === selectedModelId ? primaryModel.selectedModel : undefined);
+  const nativeImageEnabled = Boolean(selectedCatalogModel?.inputModalities.includes("image"));
+  const attachmentTitle = nativeImageEnabled ? "添加模型原生图像输入" : selectedCatalogModel ? "当前模型未声明原生图像输入" : "请先在设置中连接模型 API";
   const addImages = async (files: FileList | null) => {
     if (!files?.length || !nativeImageEnabled) return;
     try { setPendingImages(await readNativeImages(files, pendingImages)); setAttachmentError(""); }
@@ -266,7 +277,7 @@ export function ChatView({ project }: { project: ResearchProject }) {
     <AssistantRuntimeProvider runtime={runtime}>
       <div className={`chat-workbench ${artifactExpanded ? "artifact-expanded" : ""} ${artifactOpen && !artifactDocked && !artifactExpanded ? "artifact-overlay" : ""}`} ref={workbenchRef} style={{ gridTemplateColumns: artifactExpanded || !artifactOpen || !artifactDocked ? "minmax(0, 1fr)" : `minmax(520px, 1fr) 7px ${artifactWidth}px` }}>
         <ThreadPrimitive.Root className="chat-view">
-          <div className="chat-heading"><div><small>{project.name} · {primaryMode === "conversation" ? "研究对话" : "Agent 可观测性"}</small><h1>{primaryMode === "conversation" ? activeSession?.title ?? "新对话" : "Agent 运行图"}</h1></div><div className="chat-heading-actions"><div className="chat-primary-switch"><button className={primaryMode === "conversation" ? "active" : ""} onClick={() => switchPrimaryMode("conversation")}>对话</button><button className={primaryMode === "execution" ? "active" : ""} onClick={() => switchPrimaryMode("execution")}>运行图</button></div><div className={`chat-model-state ${modelRuntime?.mode ?? "offline"}`}><i />{modelRuntime?.mode === "live" ? modelRuntime.ready ? `${modelRuntime.selectedModel?.name ?? modelRuntime.modelId}` : "路由待检查" : "离线演示"}</div>{!artifactOpen && primaryMode === "conversation" ? <button onClick={() => setArtifactOpen(true)}>打开产物面板</button> : null}</div></div>
+          <div className="chat-heading"><div><small>{project.name} · {primaryMode === "conversation" ? "研究对话" : "Agent 可观测性"}</small><h1>{primaryMode === "conversation" ? activeSession?.title ?? "新对话" : "Agent 运行图"}</h1></div><div className="chat-heading-actions"><div className="chat-primary-switch"><button className={primaryMode === "conversation" ? "active" : ""} onClick={() => switchPrimaryMode("conversation")}>对话</button><button className={primaryMode === "execution" ? "active" : ""} onClick={() => switchPrimaryMode("execution")}>运行图</button></div>{primaryMode === "conversation" ? <label className={`chat-model-picker ${selectedModelKey ? "ready" : "blocked"}`} title={selectedModelKey ? "仅覆盖下一次 Chat 运行；子智能体仍按角色路由" : "请先在设置中连接模型 API"}><i /><select aria-label="本轮模型" disabled={running || !selectedModelKey} value={selectedModelKey} onChange={(event) => setSelectedModelKey(event.target.value)}>{!selectedModelKey ? <option value="">连接模型 API 后可切换</option> : null}{modelRuntime?.primary && !selectableModels.some((model) => model.providerId === modelRuntime.primary!.providerId && model.id === modelRuntime.primary!.modelId) ? <option value={`${modelRuntime.primary.providerId}::${modelRuntime.primary.modelId}`}>{modelRuntime.primary.selectedModel?.name ?? modelRuntime.primary.modelId}</option> : null}{selectableModels.map((model) => <option key={`${model.providerId}:${model.id}`} value={`${model.providerId}::${model.id}`}>{model.name} · {model.providerId}</option>)}</select></label> : null}{!artifactOpen && primaryMode === "conversation" ? <button onClick={() => setArtifactOpen(true)}>打开产物面板</button> : null}</div></div>
           {primaryMode === "execution" ? <AgentExecutionGraphView projectId={project.id} activeSessionId={activeSessionId} refreshKey={graphRefreshKey} onReturnToChat={() => switchPrimaryMode("conversation")} /> : <>
             <ThreadPrimitive.Viewport className="aui-thread">
               <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />

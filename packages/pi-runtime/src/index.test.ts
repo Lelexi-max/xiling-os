@@ -79,20 +79,20 @@ describe("PiRuntimeAdapter", () => {
     expect(capturedContent).toEqual([{ type: "text", text: "解释图像" }, { type: "image", data: "aW1hZ2U=", mimeType: "image/png" }]);
   });
 
-  it("persists offline-by-default model routing and validates live selection", async () => {
+  it("persists primary and role model routes without a product offline mode", async () => {
     const root = await mkdtemp(join(tmpdir(), "xiling-model-route-"));
     const path = join(root, "runtime.json");
     const first = new ModelRuntimeStore(path, () => new Date("2026-08-23T01:00:00.000Z"));
     await first.initialize();
-    expect(first.get()).toMatchObject({ mode: "offline", reasoning: "medium" });
+    expect(first.get()).toMatchObject({ roleRoutes: {} });
     const selected = listRecommendedModels()[0]!;
-    await first.set({ mode: "live", reasoning: "low", providerId: selected.providerId, modelId: selected.id });
+    await first.set({ primary: { reasoning: "low", providerId: selected.providerId, modelId: selected.id }, roleRoutes: { "research-explorer": { providerId: "openrouter", modelId: "vendor/research", reasoning: "medium" } } });
     const restored = new ModelRuntimeStore(path);
     await restored.initialize();
-    expect(restored.get()).toMatchObject({ mode: "live", reasoning: "low", providerId: selected.providerId, modelId: selected.id });
-    await restored.set({ mode: "live", reasoning: "medium", providerId: "openrouter", modelId: "vendor/new-model-preview" });
-    expect(restored.get()).toMatchObject({ providerId: "openrouter", modelId: "vendor/new-model-preview" });
-    await expect(restored.set({ mode: "live", reasoning: "medium" })).rejects.toThrow("requires a selected model");
+    expect(restored.get()).toMatchObject({ primary: { reasoning: "low", providerId: selected.providerId, modelId: selected.id }, roleRoutes: { "research-explorer": { providerId: "openrouter", modelId: "vendor/research" } } });
+    await restored.set({ primary: { reasoning: "medium", providerId: "openrouter", modelId: "vendor/new-model-preview" }, roleRoutes: {} });
+    expect(restored.get()).toMatchObject({ primary: { providerId: "openrouter", modelId: "vendor/new-model-preview" } });
+    await expect(restored.set({ roleRoutes: {} })).rejects.toThrow("primary model route is required");
   });
 
   it("persists only verified native image capability metadata for a directory-external model", async () => {
@@ -100,11 +100,11 @@ describe("PiRuntimeAdapter", () => {
     const path = join(root, "runtime.json");
     const store = new ModelRuntimeStore(path, () => new Date("2026-08-25T01:00:00.000Z"));
     await store.initialize();
-    await expect(store.set({ mode: "live", reasoning: "medium", providerId: "openrouter", modelId: "vendor/vision-preview", inputModalities: ["text", "image"] })).rejects.toThrow("requires verified model capabilities");
-    await store.set({ mode: "live", reasoning: "medium", providerId: "openrouter", modelId: "vendor/vision-preview", inputModalities: ["text", "image"], capabilitySource: "native-probe", capabilitiesVerifiedAt: "2026-08-25T00:59:00.000Z" });
+    await expect(store.set({ primary: { reasoning: "medium", providerId: "openrouter", modelId: "vendor/vision-preview", inputModalities: ["text", "image"] }, roleRoutes: {} })).rejects.toThrow("requires verified model capabilities");
+    await store.set({ primary: { reasoning: "medium", providerId: "openrouter", modelId: "vendor/vision-preview", inputModalities: ["text", "image"], capabilitySource: "native-probe", capabilitiesVerifiedAt: "2026-08-25T00:59:00.000Z" }, roleRoutes: {} });
     const restored = new ModelRuntimeStore(path);
     await restored.initialize();
-    expect(restored.get()).toMatchObject({ inputModalities: ["text", "image"], capabilitySource: "native-probe", capabilitiesVerifiedAt: "2026-08-25T00:59:00.000Z" });
+    expect(restored.get()).toMatchObject({ primary: { inputModalities: ["text", "image"], capabilitySource: "native-probe", capabilitiesVerifiedAt: "2026-08-25T00:59:00.000Z" } });
   });
 
   it("persists provider usage as an append-only token ledger", async () => {

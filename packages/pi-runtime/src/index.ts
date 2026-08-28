@@ -11,7 +11,7 @@ import { mistralProvider } from "@earendil-works/pi-ai/providers/mistral";
 import { moonshotaiProvider } from "@earendil-works/pi-ai/providers/moonshotai";
 import { zaiProvider } from "@earendil-works/pi-ai/providers/zai";
 import { groqProvider } from "@earendil-works/pi-ai/providers/groq";
-import type { AgentStreamEvent, ModelCatalogEntry, ModelProviderId, ModelRuntimeSettings, TokenLedgerEntry } from "@xiling/contracts";
+import type { AgentStreamEvent, ModelCatalogEntry, ModelProviderId, ModelRouteSettings, ModelRuntimeSettings, TokenLedgerEntry } from "@xiling/contracts";
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -504,7 +504,7 @@ export function createProviderRoute(provider: Provider, modelId: string, apiKey:
   return runtimeRoute(model, streamFn);
 }
 
-const defaultSettings = (): ModelRuntimeSettings => ({ mode: "offline", reasoning: "medium", updatedAt: new Date(0).toISOString() });
+const defaultSettings = (): ModelRuntimeSettings => ({ roleRoutes: {}, updatedAt: new Date(0).toISOString() });
 
 export class ModelRuntimeStore {
   private value = defaultSettings();
@@ -518,7 +518,7 @@ export class ModelRuntimeStore {
   get(): ModelRuntimeSettings { return structuredClone(this.value); }
 
   async set(input: Omit<ModelRuntimeSettings, "updatedAt">): Promise<ModelRuntimeSettings> {
-    const value = this.validate({ ...input, updatedAt: this.now().toISOString() });
+    const value = this.validate({ ...input, updatedAt: this.now().toISOString() }, true);
     await mkdir(dirname(this.path), { recursive: true });
     const temporary = `${this.path}.${randomUUID()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -527,22 +527,30 @@ export class ModelRuntimeStore {
     return this.get();
   }
 
-  private validate(value: unknown): ModelRuntimeSettings {
-    if (!value || typeof value !== "object") throw new Error("invalid model runtime settings");
-    const candidate = value as Partial<ModelRuntimeSettings>;
-    if (candidate.mode !== "offline" && candidate.mode !== "live") throw new Error("invalid model runtime mode");
-    if (!(["off", "low", "medium", "high"] as const).includes(candidate.reasoning as ModelRuntimeSettings["reasoning"])) throw new Error("invalid reasoning level");
+  private validateRoute(value: unknown): ModelRouteSettings {
+    if (!value || typeof value !== "object") throw new Error("invalid model route");
+    const candidate = value as Partial<ModelRouteSettings>;
     const providerIds: ModelProviderId[] = ["openai", "anthropic", "google", "openrouter", "deepseek", "xai", "mistral", "moonshotai", "zai", "groq", "custom"];
-    if (candidate.providerId !== undefined && !providerIds.includes(candidate.providerId)) throw new Error("invalid model provider");
-    if (candidate.modelId !== undefined && (typeof candidate.modelId !== "string" || !candidate.modelId.trim() || candidate.modelId.length > 240)) throw new Error("invalid model id");
-    if ((candidate.providerId === undefined) !== (candidate.modelId === undefined)) throw new Error("provider and model must be selected together");
-    if (candidate.mode === "live" && (!candidate.providerId || !candidate.modelId)) throw new Error("live mode requires a selected model");
+    if (!candidate.providerId || !providerIds.includes(candidate.providerId)) throw new Error("invalid model provider");
+    if (typeof candidate.modelId !== "string" || !candidate.modelId.trim() || candidate.modelId.length > 240) throw new Error("invalid model id");
+    if (!(["off", "low", "medium", "high"] as const).includes(candidate.reasoning as ModelRouteSettings["reasoning"])) throw new Error("invalid reasoning level");
     const inputModalities = candidate.inputModalities;
     if (inputModalities && (!Array.isArray(inputModalities) || !inputModalities.length || inputModalities.some((item) => item !== "text" && item !== "image") || !inputModalities.includes("text"))) throw new Error("invalid native input modalities");
     if (candidate.capabilitySource !== undefined && candidate.capabilitySource !== "pi-catalog" && candidate.capabilitySource !== "native-probe") throw new Error("invalid capability source");
     if (candidate.capabilitiesVerifiedAt !== undefined && (typeof candidate.capabilitiesVerifiedAt !== "string" || Number.isNaN(Date.parse(candidate.capabilitiesVerifiedAt)))) throw new Error("invalid capability verification timestamp");
     if (inputModalities?.includes("image") && (!candidate.capabilitySource || !candidate.capabilitiesVerifiedAt)) throw new Error("image input requires verified model capabilities");
+    return { providerId: candidate.providerId, modelId: candidate.modelId.trim(), reasoning: candidate.reasoning as ModelRouteSettings["reasoning"], ...(inputModalities ? { inputModalities: [...new Set(inputModalities)] } : {}), ...(candidate.capabilitySource ? { capabilitySource: candidate.capabilitySource } : {}), ...(candidate.capabilitiesVerifiedAt ? { capabilitiesVerifiedAt: candidate.capabilitiesVerifiedAt } : {}) };
+  }
+
+  private validate(value: unknown, requirePrimary = false): ModelRuntimeSettings {
+    if (!value || typeof value !== "object") throw new Error("invalid model runtime settings");
+    const candidate = value as Partial<ModelRuntimeSettings> & { mode?: string; providerId?: ModelProviderId; modelId?: string; reasoning?: ModelRouteSettings["reasoning"]; inputModalities?: Array<"text" | "image">; capabilitySource?: ModelRouteSettings["capabilitySource"]; capabilitiesVerifiedAt?: string };
+    const migratedPrimary = candidate.primary ?? (candidate.mode === "live" && candidate.providerId && candidate.modelId ? { providerId: candidate.providerId, modelId: candidate.modelId, reasoning: candidate.reasoning ?? "medium", ...(candidate.inputModalities ? { inputModalities: candidate.inputModalities } : {}), ...(candidate.capabilitySource ? { capabilitySource: candidate.capabilitySource } : {}), ...(candidate.capabilitiesVerifiedAt ? { capabilitiesVerifiedAt: candidate.capabilitiesVerifiedAt } : {}) } : undefined);
+    if (requirePrimary && !migratedPrimary) throw new Error("primary model route is required");
+    if (!candidate.roleRoutes || typeof candidate.roleRoutes !== "object" || Array.isArray(candidate.roleRoutes)) candidate.roleRoutes = {};
+    const roleEntries = Object.entries(candidate.roleRoutes);
+    if (roleEntries.length > 16 || roleEntries.some(([roleId]) => !roleId || roleId.length > 80)) throw new Error("invalid role routes");
     if (typeof candidate.updatedAt !== "string" || Number.isNaN(Date.parse(candidate.updatedAt))) throw new Error("invalid settings timestamp");
-    return { mode: candidate.mode, reasoning: candidate.reasoning as ModelRuntimeSettings["reasoning"], updatedAt: candidate.updatedAt, ...(candidate.providerId ? { providerId: candidate.providerId, modelId: candidate.modelId } : {}), ...(inputModalities ? { inputModalities: [...new Set(inputModalities)] } : {}), ...(candidate.capabilitySource ? { capabilitySource: candidate.capabilitySource } : {}), ...(candidate.capabilitiesVerifiedAt ? { capabilitiesVerifiedAt: candidate.capabilitiesVerifiedAt } : {}) };
+    return { ...(migratedPrimary ? { primary: this.validateRoute(migratedPrimary) } : {}), roleRoutes: Object.fromEntries(roleEntries.map(([roleId, route]) => [roleId, this.validateRoute(route)])), updatedAt: candidate.updatedAt };
   }
 }

@@ -1,4 +1,4 @@
-import type { AgentInputAttachment, AgentStreamEvent } from "@xiling/contracts";
+import type { AgentInputAttachment, AgentStreamEvent, ModelProviderId } from "@xiling/contracts";
 import { jsonInit } from "./api-client.js";
 import { streamAgentEvents } from "./agent-stream.js";
 
@@ -6,6 +6,7 @@ export interface ResearchTurnRequest {
   projectId: string;
   sessionId: string;
   prompt: string;
+  modelRoute?: { providerId: ModelProviderId; modelId: string };
   attachments?: Array<{ name: string; modality: "image"; mimeType: string; size: number; data: string }>;
   context?: { activeNodeId: string; quotedNodeIds: string[] };
   signal?: AbortSignal;
@@ -13,7 +14,7 @@ export interface ResearchTurnRequest {
 
 export async function* runResearchTurn(request: ResearchTurnRequest): AsyncGenerator<AgentStreamEvent> {
   const clientCommandId = crypto.randomUUID();
-  const startedResponse = await fetch("/api/agent-center/runs", jsonInit("POST", { sessionId: request.sessionId, projectId: request.projectId, prompt: request.prompt, clientCommandId, ...(request.attachments?.length ? { attachments: request.attachments } : {}), ...(request.context ? { context: request.context } : {}) }));
+  const startedResponse = await fetch("/api/agent-center/runs", jsonInit("POST", { sessionId: request.sessionId, projectId: request.projectId, prompt: request.prompt, clientCommandId, ...(request.modelRoute ? { modelRoute: request.modelRoute } : {}), ...(request.attachments?.length ? { attachments: request.attachments } : {}), ...(request.context ? { context: request.context } : {}) }));
   if (!startedResponse.ok) throw new Error((await startedResponse.text()) || `HTTP ${startedResponse.status}`);
   const started = await startedResponse.json() as { run: { id: string; attachments?: AgentInputAttachment[] }; entries: Array<{ id: string; kind: string }> };
   const runId = started.run.id;

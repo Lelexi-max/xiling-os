@@ -1,5 +1,7 @@
 # ADR-0010：Pi 模型目录与显式在线路由
 
+> 2026-08-28：产品 `offline/live` 双模式已由 [ADR 0037](0037-real-model-routing-and-role-overrides.md) 取代。本文件仅保留早期决策历史。
+
 - 状态：Gate 4 已采用
 - 日期：2026-08-23
 

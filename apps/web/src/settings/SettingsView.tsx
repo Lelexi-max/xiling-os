@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CredentialProviderId, CredentialProviderStatus, InstalledSkillSummary, InstalledSkillsResponse, McpSettingsResponse, ModelCatalogEntry, ModelProviderId, ModelRuntimeStatus, ProviderConnectionTestResult } from "@xiling/contracts";
+import type { CredentialProviderId, CredentialProviderStatus, InstalledSkillSummary, InstalledSkillsResponse, McpSettingsResponse, ModelCatalogEntry, ModelProviderId, ModelRouteSettings, ModelRuntimeStatus, ProviderConnectionTestResult } from "@xiling/contracts";
 import { ApiError, apiJson, jsonInit } from "../lib/api-client.js";
 import { McpSettingsPanel } from "./McpSettingsPanel.js";
 
@@ -7,22 +7,23 @@ type SettingsSection = "overview" | "model" | "agents" | "domains" | "skills" | 
 type ProviderCategory = CredentialProviderStatus["category"];
 type InstalledAgentRole = { id: string; title: string; description: string; allowedCapabilities: string[]; defaultIsolation: "scoped" | "blind" | "execution"; dynamic?: boolean };
 type InstalledScienceDomain = { id: string; version: string; title: string; description: string; disciplines: string[]; capabilities: Array<{ id: string }>; agentRoles: Array<{ id: string }>; connectorKinds: string[]; artifactKinds: string[]; schemaNamespaces: string[] };
+type RouteDraft = { providerId?: ModelProviderId; modelId: string; reasoning: ModelRouteSettings["reasoning"] };
 
 const sections: Array<{ label: string; items: Array<{ id: SettingsSection; label: string; icon: string }> }> = [
   { label: "常规", items: [{ id: "overview", label: "设置概览", icon: "⌂" }] },
-  { label: "智能体", items: [{ id: "model", label: "模型与推理", icon: "◈" }, { id: "agents", label: "多智能体", icon: "⑂" }, { id: "domains", label: "科学领域", icon: "◉" }, { id: "skills", label: "Skills", icon: "✦" }, { id: "mcp", label: "MCP", icon: "⌘" }] },
-  { label: "服务连接", items: [{ id: "model-apis", label: "模型 API", icon: "⌁" }, { id: "literature", label: "文献服务", icon: "⌕" }, { id: "data", label: "科研数据账户", icon: "≈" }] },
+  { label: "智能体", items: [{ id: "model", label: "模型分配", icon: "◈" }, { id: "agents", label: "多智能体", icon: "⑂" }, { id: "domains", label: "科学领域", icon: "◉" }, { id: "skills", label: "Skills", icon: "✦" }, { id: "mcp", label: "MCP", icon: "⌘" }] },
+  { label: "连接", items: [{ id: "model-apis", label: "模型 API 连接", icon: "⌁" }, { id: "literature", label: "文献服务", icon: "⌕" }, { id: "data", label: "科研数据账户", icon: "≈" }] },
   { label: "系统", items: [{ id: "security", label: "安全与运行", icon: "◇" }] },
 ];
 
 const sectionCopy: Record<SettingsSection, { eyebrow: string; title: string; description: string }> = {
   overview: { eyebrow: "SETTINGS", title: "设置概览", description: "集中查看智能体、服务连接和本地安全状态。" },
-  model: { eyebrow: "AGENT · MODEL ROUTER", title: "模型与推理", description: "选择 Chat 默认模型；模型 ID 可自由输入，原生模态按具体模型声明。" },
+  model: { eyebrow: "AGENT · MODEL ROUTER", title: "模型分配", description: "配置主智能体和各科研角色使用的真实模型；Chat 中仍可为下一次运行临时切换。" },
   agents: { eyebrow: "AGENT · RESEARCH TEAM", title: "多智能体", description: "查看预置科研角色、上下文隔离和能力边界；主智能体只在任务值得拆分时按需委派。" },
   domains: { eyebrow: "EXTENSIONS · SCIENCE DOMAINS", title: "科学领域", description: "通用科研内核保持稳定，领域包按项目贡献提示、能力、角色、连接器与 Artifact 类型。" },
   skills: { eyebrow: "AGENT · LAZY CAPABILITIES", title: "已安装 Skills", description: "查看宿主目录中已注册的研究能力，以及它们何时加载、关联哪些工具。" },
   mcp: { eyebrow: "AGENT · MCP GATEWAY", title: "MCP 连接", description: "配置独立 MCP Host；服务器和工具 schema 按任务命中后惰性发现，不常驻 Agent 上下文。" },
-  "model-apis": { eyebrow: "CONNECTIONS · MODEL", title: "模型 API", description: "管理模型提供商和自定义兼容 API；保存后可执行最短文字连通测试。" },
+  "model-apis": { eyebrow: "CONNECTIONS · MODEL", title: "模型 API 连接", description: "这里只管理连接和连通性测试；模型分配在“模型分配”中完成。" },
   literature: { eyebrow: "CONNECTIONS · LITERATURE", title: "文献服务", description: "配置文献图的主数据源与降级数据源。" },
   data: { eyebrow: "CONNECTIONS · RESEARCH DATA", title: "科研数据账户", description: "配置已安装领域包的数据账户；凭据只注入已批准的单次运行。" },
   security: { eyebrow: "SYSTEM · LOCAL FIRST", title: "安全与运行", description: "查看加密、凭据隔离、当前模型路由和上下文加载边界。" },
@@ -46,9 +47,9 @@ export function SettingsView() {
   const [runtime, setRuntime] = useState<ModelRuntimeStatus>();
   const [modelProvider, setModelProvider] = useState<ModelProviderId>();
   const [modelId, setModelId] = useState("");
-  const [reasoning, setReasoning] = useState<ModelRuntimeStatus["reasoning"]>("medium");
+  const [reasoning, setReasoning] = useState<ModelRouteSettings["reasoning"]>("medium");
   const [modelImageInput, setModelImageInput] = useState(false);
-  const [confirmLive, setConfirmLive] = useState(false);
+  const [roleDrafts, setRoleDrafts] = useState<Record<string, RouteDraft>>({});
   const [testResults, setTestResults] = useState<Partial<Record<CredentialProviderId, ProviderConnectionTestResult>>>({});
   const [skills, setSkills] = useState<InstalledSkillsResponse>();
   const [mcp, setMcp] = useState<McpSettingsResponse>();
@@ -66,8 +67,12 @@ export function SettingsView() {
         apiJson<{ roles: InstalledAgentRole[] }>("/api/agent-center/roles"),
         apiJson<{ domains: InstalledScienceDomain[] }>("/api/science/domains"),
       ]);
-      setProviders(nextProviders); setCatalog(models.catalog); setRuntime(models.runtime); setReasoning(models.runtime.reasoning); setSkills(nextSkills); setMcp(nextMcp); setAgentRoles(nextAgentRoles.roles); setScienceDomains(nextDomains.domains);
-      if (models.runtime.providerId && models.runtime.modelId) { setModelProvider(models.runtime.providerId); setModelId(models.runtime.modelId); setModelImageInput(Boolean(models.runtime.selectedModel?.inputModalities.includes("image"))); }
+      setProviders(nextProviders); setCatalog(models.catalog); setRuntime(models.runtime); setSkills(nextSkills); setMcp(nextMcp); setAgentRoles(nextAgentRoles.roles); setScienceDomains(nextDomains.domains);
+      if (models.runtime.primary) { setModelProvider(models.runtime.primary.providerId); setModelId(models.runtime.primary.modelId); setReasoning(models.runtime.primary.reasoning); setModelImageInput(Boolean(models.runtime.primary.selectedModel?.inputModalities.includes("image"))); }
+      setRoleDrafts(Object.fromEntries(nextAgentRoles.roles.map((role) => {
+        const route = models.runtime.roleRoutes[role.id];
+        return [role.id, route ? { providerId: route.providerId, modelId: route.modelId, reasoning: route.reasoning } : { modelId: "", reasoning: "medium" as const }];
+      })));
     } catch (error) { setMessage(error instanceof Error ? `设置加载失败：${error.message}` : "设置加载失败。"); }
   };
   useEffect(() => { void refresh(); }, []);
@@ -100,28 +105,23 @@ export function SettingsView() {
       setMessage(`${provider.title} 连接失败：${body?.message ?? "请检查密钥、Base URL 和模型 ID"}`);
     } finally { setBusy(undefined); }
   };
-  const saveRuntime = async (mode: "offline" | "live") => {
+  const saveRuntime = async () => {
     const normalizedModelId = modelId.trim();
-    if (mode === "live") {
-      if (!modelProvider || !normalizedModelId) { setMessage("请先选择提供商并输入模型名称或模型 ID。"); return; }
-      if (!providers.find((provider) => provider.id === modelProvider)?.configured) { setMessage("请先保存所选模型提供商的 API Key。"); return; }
-      if (!confirmLive) { setConfirmLive(true); setMessage("真实模型调用可能产生费用。再次点击“确认启用真实调用”后才会切换。"); return; }
-    }
+    if (!modelProvider || !normalizedModelId) { setMessage("请先选择主智能体的提供商并输入模型名称或模型 ID。"); return; }
+    if (!providers.find((provider) => provider.id === modelProvider)?.configured) { setMessage("请先在“模型 API 连接”中保存所选提供商。"); return; }
     try {
-      const storedInputModalities = runtime && runtime.providerId === modelProvider && runtime.modelId === normalizedModelId ? runtime.inputModalities ?? ["text"] : ["text"];
-      const requestedInputModalities = mode === "live" ? ["text", ...(modelImageInput ? ["image" as const] : [])] : storedInputModalities;
-      const nextRuntime = await apiJson<ModelRuntimeStatus>("/api/settings/models", jsonInit("PUT", { mode, reasoning, ...(modelProvider && normalizedModelId ? { providerId: modelProvider, modelId: normalizedModelId, inputModalities: requestedInputModalities } : {}) }));
-      setRuntime(nextRuntime); setModelImageInput(Boolean(nextRuntime.selectedModel?.inputModalities.includes("image"))); setMessage(mode === "live" ? modelImageInput && nextRuntime.capabilitySource === "native-probe" ? "原生图像探针通过，真实模型路由已启用。" : "真实模型路由已启用。" : "已切换为离线模式，不会产生模型费用。");
+      const roleRoutes = Object.fromEntries(Object.entries(roleDrafts).flatMap(([roleId, draft]) => draft.providerId && draft.modelId.trim() ? [[roleId, { providerId: draft.providerId, modelId: draft.modelId.trim(), reasoning: draft.reasoning, inputModalities: catalog.find((item) => item.providerId === draft.providerId && item.id === draft.modelId.trim())?.inputModalities ?? ["text"] }]] : []));
+      const nextRuntime = await apiJson<ModelRuntimeStatus>("/api/settings/models", jsonInit("PUT", { primary: { providerId: modelProvider, modelId: normalizedModelId, reasoning, inputModalities: ["text", ...(modelImageInput ? ["image" as const] : [])] }, roleRoutes }));
+      setRuntime(nextRuntime); setModelImageInput(Boolean(nextRuntime.primary?.selectedModel?.inputModalities.includes("image"))); setMessage("模型分配已保存；后续运行全部使用真实模型调用。");
     } catch (error) { const body = error instanceof ApiError ? error.body as { error?: string } : undefined; setMessage(`模型运行设置保存失败：${body?.error ?? (error instanceof Error ? error.message : "未知错误")}`); }
-    setConfirmLive(false);
   };
 
   const configuredCount = providers.filter((provider) => provider.configured).length;
   const modelProviders = providers.filter((provider) => provider.category === "model");
   const selectedDraft = catalog.find((model) => model.providerId === modelProvider && model.id === modelId);
-  const activeModelCapabilities = selectedDraft ?? (runtime && runtime.providerId === modelProvider && runtime.modelId === modelId ? runtime.selectedModel : undefined);
+  const activeModelCapabilities = selectedDraft ?? (runtime?.primary && runtime.primary.providerId === modelProvider && runtime.primary.modelId === modelId ? runtime.primary.selectedModel : undefined);
   const imageCapabilityCanBeSelected = Boolean(modelProvider && modelId.trim() && (!selectedDraft || selectedDraft.inputModalities.includes("image")));
-  const hasPersistedNativeProbe = Boolean(runtime && runtime.providerId === modelProvider && runtime.modelId === modelId && runtime.capabilitySource === "native-probe" && modelImageInput);
+  const hasPersistedNativeProbe = Boolean(runtime?.primary && runtime.primary.providerId === modelProvider && runtime.primary.modelId === modelId && runtime.primary.capabilitySource === "native-probe" && modelImageInput);
   const capabilityState = selectedDraft ? "PI CATALOG" : hasPersistedNativeProbe ? "NATIVE PROBE" : modelImageInput ? "PROBE ON SAVE" : activeModelCapabilities ? "TEXT ONLY" : "WAITING FOR MODEL";
   const visibleSkills = useMemo(() => {
     const query = skillQuery.trim().toLocaleLowerCase();
@@ -142,14 +142,15 @@ export function SettingsView() {
   };
 
   const renderModel = () => <section className="model-runtime-card settings-primary-card">
-    <div className="model-runtime-title"><div><small>PI MODEL ROUTER</small><h2>默认模型</h2><p>完整模型目录留在宿主层；每次调用只携带当前选中的模型。</p></div><span className={`runtime-state ${runtime?.mode ?? "offline"}`}>{runtime?.mode === "live" ? runtime.ready ? "LIVE READY" : "LIVE BLOCKED" : "OFFLINE"}</span></div>
+    <div className="model-runtime-title"><div><small>PI MODEL ROUTER</small><h2>主智能体模型</h2><p>作为 Research Director 的默认路由；未单独分配的子智能体自动继承它。</p></div><span className={`runtime-state ${runtime?.ready ? "live" : "blocked"}`}>{runtime?.ready ? "READY" : "NEEDS SETUP"}</span></div>
     <div className="model-runtime-fields">
-      <label><span>提供商</span><select aria-label="默认模型提供商" value={modelProvider ?? ""} onChange={(event) => { const provider = event.target.value as ModelProviderId; setModelProvider(provider); setModelId(""); setModelImageInput(false); setConfirmLive(false); }}><option value="">选择提供商</option>{modelProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.title}</option>)}</select></label>
-      <label className="model-id-field"><span>模型名称 / ID <em>可自由输入</em></span><input aria-label="默认模型" list="recommended-models" value={modelId} disabled={!modelProvider} placeholder={modelProvider ? "输入模型 ID" : "请先选择提供商"} autoComplete="off" onChange={(event) => { const nextId = event.target.value; const known = catalog.find((model) => model.providerId === modelProvider && model.id === nextId); setModelId(nextId); setModelImageInput(Boolean(known?.inputModalities.includes("image"))); setConfirmLive(false); }} /><datalist id="recommended-models">{catalog.filter((model) => model.providerId === modelProvider).map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</datalist></label>
-      <label><span>推理强度</span><select aria-label="默认推理强度" value={reasoning} onChange={(event) => setReasoning(event.target.value as ModelRuntimeStatus["reasoning"])}><option value="off">关闭</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
+      <label><span>提供商</span><select aria-label="默认模型提供商" value={modelProvider ?? ""} onChange={(event) => { const provider = event.target.value as ModelProviderId; setModelProvider(provider); setModelId(""); setModelImageInput(false); }}><option value="">选择提供商</option>{modelProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.title}{provider.configured ? " · 已连接" : " · 未连接"}</option>)}</select></label>
+      <label className="model-id-field"><span>模型名称 / ID <em>可自由输入</em></span><input aria-label="默认模型" list="recommended-models" value={modelId} disabled={!modelProvider} placeholder={modelProvider ? "输入或选择模型 ID" : "请先选择提供商"} autoComplete="off" onChange={(event) => { const nextId = event.target.value; const known = catalog.find((model) => model.providerId === modelProvider && model.id === nextId); setModelId(nextId); setModelImageInput(Boolean(known?.inputModalities.includes("image"))); }} /><datalist id="recommended-models">{catalog.filter((model) => model.providerId === modelProvider).map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</datalist></label>
+      <label><span>推理强度</span><select aria-label="默认推理强度" value={reasoning} onChange={(event) => setReasoning(event.target.value as ModelRouteSettings["reasoning"])}><option value="off">关闭</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
     </div>
-    <div className="model-native-capabilities"><div className="model-native-title"><div><b>当前模型可用的原生模态</b><small>取具体模型能力与 Pi 传输能力的交集，不从厂商名称或模型名称猜测</small></div><span>{capabilityState}</span></div>{modelProvider && modelId.trim() ? <><div className="model-native-rows"><div><span>输入</span><b>文字</b><label className={`model-modality-toggle ${modelImageInput ? "active" : ""}`}><input type="checkbox" checked={modelImageInput} disabled={!imageCapabilityCanBeSelected} onChange={(event) => { setModelImageInput(event.target.checked); setConfirmLive(false); }} />图像</label><b className="unavailable" title="Pi 当前没有原生音频内容块">音频 · 暂不可用</b><b className="unavailable" title="Pi 当前没有原生视频内容块">视频 · 暂不可用</b></div><div><span>输出</span><b>文字</b><b className="unavailable">图像 · 暂不可用</b></div></div><p>{selectedDraft ? "能力来自 Pi 模型目录；目录明确不支持的模态不能手动开启。" : modelImageInput ? "这是目录外模型。确认启用时，服务端会发送一张 1×1 PNG 原生探针；只有模型真实接受后才保存图像能力。" : "目录外模型默认仅文字。可显式选择图像，并通过一次原生内容块探针验证；不会依据 vision 等名称猜测。"} 音频与视频不会被转写或抽帧。</p></> : <p>选择或输入具体模型后配置；未知能力默认关闭。</p>}</div>
-    <div className="model-runtime-meta"><span>{selectedDraft ? `${selectedDraft.contextWindow.toLocaleString()} context · ${selectedDraft.reasoning ? "支持推理" : "标准模型"}` : modelId.trim() ? `自定义模型：${modelId.trim()} · 能力与费用以提供商为准` : "可从建议中选择，也可直接输入任意模型 ID"}</span><div><button className="secondary" onClick={() => void saveRuntime("offline")}>使用离线模式</button><button disabled={!modelProvider || !modelId.trim()} onClick={() => void saveRuntime("live")}>{confirmLive ? "确认启用真实调用" : "启用真实调用"}</button></div></div>
+    <div className="model-native-capabilities"><div className="model-native-title"><div><b>当前模型可用的原生模态</b><small>按具体模型声明；不支持的输入在 Chat 中直接禁用</small></div><span>{capabilityState}</span></div>{modelProvider && modelId.trim() ? <><div className="model-native-rows"><div><span>输入</span><b>文字</b><label className={`model-modality-toggle ${modelImageInput ? "active" : ""}`}><input type="checkbox" checked={modelImageInput} disabled={!imageCapabilityCanBeSelected} onChange={(event) => setModelImageInput(event.target.checked)} />图像</label><b className="unavailable">音频 · 当前传输层不可用</b><b className="unavailable">视频 · 当前传输层不可用</b></div><div><span>输出</span><b>文字</b></div></div><p>{selectedDraft ? "能力来自 Pi 模型目录；目录明确不支持的模态不能开启。" : modelImageInput ? "目录外模型保存前会执行一次原生图像探针。" : "目录外模型默认仅文字；系统不会用转写或抽帧伪装原生模态。"}</p></> : <p>选择具体模型后显示原生能力。</p>}</div>
+    <div className="role-route-section"><header><div><small>CHILD AGENTS</small><h3>子智能体模型</h3><p>留空即继承主模型；只有确有成本、上下文或审查隔离需求时才单独分配。</p></div><span>{Object.values(roleDrafts).filter((route) => route.providerId && route.modelId).length} 个专属路由</span></header><div className="role-route-list">{agentRoles.map((role) => { const draft = roleDrafts[role.id] ?? { modelId: "", reasoning: "medium" as const }; const inherited = !draft.providerId; return <article key={role.id}><div><b>{role.title}</b><small>{role.id}</small></div><label><span>路由</span><select aria-label={`${role.title} 模型提供商`} value={draft.providerId ?? ""} onChange={(event) => setRoleDrafts((current) => ({ ...current, [role.id]: event.target.value ? { providerId: event.target.value as ModelProviderId, modelId: "", reasoning: draft.reasoning } : { modelId: "", reasoning: draft.reasoning } }))}><option value="">继承主模型</option>{modelProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.title}</option>)}</select></label><label><span>模型 ID</span><input aria-label={`${role.title} 模型`} list={`role-models-${role.id}`} disabled={inherited} value={draft.modelId} placeholder={inherited ? "使用主模型" : "输入或选择模型 ID"} onChange={(event) => setRoleDrafts((current) => ({ ...current, [role.id]: { ...draft, modelId: event.target.value } }))} /><datalist id={`role-models-${role.id}`}>{catalog.filter((model) => model.providerId === draft.providerId).map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</datalist></label><label><span>推理</span><select aria-label={`${role.title} 推理强度`} disabled={inherited} value={draft.reasoning} onChange={(event) => setRoleDrafts((current) => ({ ...current, [role.id]: { ...draft, reasoning: event.target.value as ModelRouteSettings["reasoning"] } }))}><option value="off">关闭</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label></article>; })}</div></div>
+    <div className="model-runtime-meta"><span>{selectedDraft ? `${selectedDraft.contextWindow.toLocaleString()} context · ${selectedDraft.reasoning ? "支持推理" : "标准模型"}` : modelId.trim() ? `自定义模型：${modelId.trim()}` : "先连接提供商，再选择或输入模型 ID"}</span><div><button disabled={!modelProvider || !modelId.trim()} onClick={() => void saveRuntime()}>保存全部模型分配</button></div></div>
   </section>;
 
   const renderSkills = () => <section className="skills-settings">
@@ -171,9 +172,9 @@ export function SettingsView() {
   const renderDomains = () => <section className="agent-role-settings"><div className="skills-policy"><div><span>◉</span><div><b>通用内核 + 领域包</b><p>领域包只声明贡献；工具适配器必须由 Server 显式注册，执行、下载和科研事实写入仍走原有审批。</p></div></div><dl><div><dt>{scienceDomains.length}</dt><dd>已安装</dd></div><div><dt>{scienceDomains.reduce((sum, domain) => sum + domain.capabilities.length, 0)}</dt><dd>领域能力</dd></div><div><dt>{scienceDomains.reduce((sum, domain) => sum + domain.agentRoles.length, 0)}</dt><dd>角色贡献</dd></div></dl></div><div className="agent-role-grid">{scienceDomains.map((domain) => <article key={domain.id}><header><span>{domain.title.slice(0, 1)}</span><div><h3>{domain.title}</h3><code>{domain.id} · v{domain.version}</code></div><b>{domain.id === "general-science" ? "基础内核" : "领域扩展"}</b></header><p>{domain.description}</p><section><small>学科与 Schema</small><div>{[...domain.disciplines, ...domain.schemaNamespaces].map((item) => <span key={item}>{item}</span>)}</div></section><footer><i />{domain.connectorKinds.length} 类连接器 · {domain.artifactKinds.length} 类 Artifact</footer></article>)}</div></section>;
 
   const renderOverview = () => <div className="settings-overview">
-    <section className="settings-health-strip"><div><i className={runtime?.mode === "live" && runtime.ready ? "ok" : ""} /><span><b>{runtime?.mode === "live" ? runtime.ready ? "智能体可用" : "模型路由待处理" : "离线模式"}</b><small>{runtime?.mode === "live" ? runtime.selectedModel?.name ?? runtime.modelId : "不会产生模型费用"}</small></span></div><div><i className="ok" /><span><b>本地安全边界</b><small>凭据值不会回传浏览器</small></span></div></section>
+    <section className="settings-health-strip"><div><i className={runtime?.ready ? "ok" : ""} /><span><b>{runtime?.ready ? "智能体可用" : "需要配置主模型"}</b><small>{runtime?.primary?.selectedModel?.name ?? runtime?.primary?.modelId ?? "尚未选择真实模型"}</small></span></div><div><i className="ok" /><span><b>本地安全边界</b><small>凭据值不会回传浏览器</small></span></div></section>
     <div className="settings-overview-grid">
-      <button onClick={() => setSection("model")}><span>◈</span><div><small>智能体</small><h3>模型与推理</h3><p>{runtime?.mode === "live" ? `当前使用 ${runtime.selectedModel?.name ?? runtime.modelId}` : "当前使用离线 Pi 流"}</p></div><b>›</b></button>
+      <button onClick={() => setSection("model")}><span>◈</span><div><small>智能体</small><h3>模型分配</h3><p>{runtime?.primary ? `主模型 ${runtime.primary.selectedModel?.name ?? runtime.primary.modelId} · ${Object.keys(runtime.roleRoutes).length} 个专属角色` : "尚未选择主模型"}</p></div><b>›</b></button>
       <button onClick={() => setSection("skills")}><span>✦</span><div><small>智能体</small><h3>{skills?.skills.length ?? 0} 个 Skills</h3><p>元数据常驻，正文按任务命中加载</p></div><b>›</b></button>
       <button onClick={() => setSection("agents")}><span>⑂</span><div><small>智能体</small><h3>{agentRoles.length} 个科研角色</h3><p>独立 Session · 受控并发 · 禁止递归</p></div><b>›</b></button>
       <button onClick={() => setSection("domains")}><span>◉</span><div><small>扩展</small><h3>{scienceDomains.length} 个科学领域</h3><p>通用内核 · 按项目组合领域能力</p></div><b>›</b></button>
@@ -184,7 +185,7 @@ export function SettingsView() {
     <section className="security-notice"><b>配置原则</b><p>设置只决定宿主如何连接能力，不会把所有模型、Skill 或服务说明注入 Agent。每轮任务仍由 Capability Catalog 选择最小相关集合。</p></section>
   </div>;
 
-  const renderSecurity = () => <div className="settings-security-page"><section className="security-notice"><b>本地凭据</b><p>凭据使用 AES-256-GCM 加密，主密钥与密文分离并限制为当前用户读取。环境变量优先；浏览器只能读取“是否配置”。</p></section><section className="security-list"><div><span>模型路由</span><b>{runtime?.mode === "live" ? runtime.ready ? "真实调用已就绪" : "真实调用被阻止" : "离线模式"}</b><p>{runtime?.mode === "live" ? runtime.selectedModel?.name ?? runtime.modelId : "Chat 不访问模型提供商"}</p></div><div><span>Skill 上下文</span><b>按需加载</b><p>{skills?.skills.length ?? 0} 个已安装，0 个正文常驻</p></div><div><span>服务凭据</span><b>{configuredCount}/{providers.length} 已配置</b><p>只注入命中的 Provider 或已批准 Runner</p></div><div><span>科研执行</span><b>隔离容器</b><p>下载、计算与外部写入必须先审批</p></div></section><section className="runtime-boundary"><b>运行时状态</b><span>{runtime?.mode === "live" ? runtime.ready ? `Chat 将使用 ${runtime.selectedModel?.name ?? runtime.modelId}；发送消息可能产生费用。` : "真实模式已选择，但凭据或模型不可用，服务端会拒绝调用。" : "当前 Chat 使用离线 Pi 流，不会访问模型服务。"}</span></section></div>;
+  const renderSecurity = () => <div className="settings-security-page"><section className="security-notice"><b>本地凭据</b><p>凭据使用 AES-256-GCM 加密，主密钥与密文分离并限制为当前用户读取。环境变量优先；浏览器只能读取“是否配置”。</p></section><section className="security-list"><div><span>模型路由</span><b>{runtime?.ready ? "真实调用已就绪" : "模型路由被阻止"}</b><p>{runtime?.primary?.selectedModel?.name ?? runtime?.primary?.modelId ?? "尚未配置主模型"}</p></div><div><span>子智能体路由</span><b>{Object.keys(runtime?.roleRoutes ?? {}).length} 个专属分配</b><p>其余角色继承主智能体模型</p></div><div><span>Skill 上下文</span><b>按需加载</b><p>{skills?.skills.length ?? 0} 个已安装，0 个正文常驻</p></div><div><span>科研执行</span><b>隔离容器</b><p>下载、计算与外部写入必须先审批</p></div></section><section className="runtime-boundary"><b>运行时状态</b><span>{runtime?.ready ? `Chat 默认使用 ${runtime.primary?.selectedModel?.name ?? runtime.primary?.modelId}；可在对话页为下一次运行临时切换。` : "没有可用主模型时服务端会拒绝产品调用，不会自动降级为离线回答。"}</span></section></div>;
 
   const copy = sectionCopy[section];
   return <div className="settings-view settings-shell">

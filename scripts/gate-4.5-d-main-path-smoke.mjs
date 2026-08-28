@@ -5,7 +5,7 @@ import { createApp } from "../apps/server/dist/app.js";
 
 const root = await mkdtemp(join(tmpdir(), "xiling-gate-4.5-d-smoke-"));
 try {
-  const app = createApp({ dataRoot: root, connectorMode: "fixture" });
+  const app = createApp({ dataRoot: root, connectorMode: "fixture", fixtureModel: true });
   if ((await app.inject({ method: "POST", url: "/api/chat/stream", payload: { sessionId: "legacy", prompt: "legacy" } })).statusCode !== 404) throw new Error("Retired Chat stream route is still writable");
 
   const project = await app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Gate 4.5-D", description: "ownership smoke", researchQuestion: "Is the formal Agent path durable?" } });
@@ -34,7 +34,7 @@ try {
   if ((await app.inject({ method: "POST", url: `/api/v1/research-workflows/${workflowId}/run`, payload: { projectId } })).statusCode !== 409) throw new Error("Unapproved workflow was executable");
   await app.close();
 
-  const restored = createApp({ dataRoot: root, connectorMode: "fixture" });
+  const restored = createApp({ dataRoot: root, connectorMode: "fixture", fixtureModel: true });
   const messages = await restored.inject({ method: "GET", url: `/api/v1/chat-sessions/${sessionId}/messages` });
   if (messages.statusCode !== 200 || !messages.json().some((entry) => entry.role === "assistant")) throw new Error("Durable Agent transcript was not restored");
   await restored.close();

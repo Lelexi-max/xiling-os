@@ -9,9 +9,9 @@ import { z } from "zod";
 import { ResearchAgentHarness, SqliteAgentSessionStore, type RuntimeUsageInput } from "@xiling/agent-harness";
 import { projectionSchema } from "@xiling/api-contracts";
 import { ContextAssemblyCache, assembleContext, createNodeContextCapsule, estimateContextTokens, projectResearchGraphContext, type ContextNodeContent } from "@xiling/context";
-import type { AgentStreamEvent, ContextCapsule, ModelProviderId, ResourceUri } from "@xiling/contracts";
+import type { AgentStreamEvent, ContextCapsule, ModelProviderId, ModelRouteSettings, ResourceUri } from "@xiling/contracts";
 import type { ConnectorMetadataSummary, OceanSubsetRequest } from "@xiling/domain-ocean";
-import { LazySkillCatalog, PiMcpGatewayManager, PiRuntimeAdapter, ModelRuntimeStore, TokenLedger, createLiveRoute } from "@xiling/pi-runtime";
+import { LazySkillCatalog, PiMcpGatewayManager, PiRuntimeAdapter, ModelRuntimeStore, TokenLedger, createLiveRoute, createOfflineRoute, resolveModelCatalogEntry } from "@xiling/pi-runtime";
 import { DockerProjectAnalysisRunner, LocalWorkflowArtifactRegistrar } from "./research-runner.js";
 import { ConnectorWorkflowService, FixtureConnectorAdapter, JsonConnectorJobRepository, type ConnectorDownloader, type ConnectorMetadataProbe } from "@xiling/connectors";
 import { FileLiteratureCache, LiteratureSearchService, OpenAlexProvider, SemanticScholarProvider } from "@xiling/literature";
@@ -43,8 +43,9 @@ import { registerArtifactRoutes } from "./modules/artifacts/routes.js";
 import { registerAttentionRoutes } from "./modules/attention/routes.js";
 import { createTabularExecutionRunner, registerTabularExecutionRoutes } from "./modules/tabular/routes.js";
 import { createInstalledScienceDomainRegistry } from "./installed-domains.js";
+import { selectModelRoute } from "./model-route-selection.js";
 
-export function createApp(options: { dataRoot?: string; webRoot?: string; literatureFetch?: typeof fetch; literatureSleep?: (ms: number, signal?: AbortSignal) => Promise<void>; connectorProbe?: ConnectorMetadataProbe; connectorDownloader?: ConnectorDownloader; connectorMode?: "fixture" | "live"; projectAnalysisRunner?: ProjectAnalysisRunner; artifactStore?: ArtifactRegistry } = {}) {
+export function createApp(options: { dataRoot?: string; webRoot?: string; literatureFetch?: typeof fetch; literatureSleep?: (ms: number, signal?: AbortSignal) => Promise<void>; connectorProbe?: ConnectorMetadataProbe; connectorDownloader?: ConnectorDownloader; connectorMode?: "fixture" | "live"; projectAnalysisRunner?: ProjectAnalysisRunner; artifactStore?: ArtifactRegistry; fixtureModel?: boolean } = {}) {
   const app = Fastify({ logger: false });
   void app.register(cors, { origin: /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/ });
   const webRoot = options.webRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
@@ -199,6 +200,7 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
     create: async ({ sessionId, runId, prompt, attachments, commandContext, history, onUsage }) => {
       const command = z.object({
         projectId: z.string().min(1).max(120),
+        modelRoute: z.object({ providerId: z.enum(["openai", "anthropic", "google", "openrouter", "deepseek", "xai", "mistral", "moonshotai", "zai", "groq", "custom"]), modelId: z.string().trim().min(1).max(240) }).optional(),
         context: z.object({ activeNodeId: z.string().min(1).max(120), quotedNodeIds: z.array(z.string().min(1).max(120)).max(12) }).optional(),
         multiAgent: z.object({ delegationId: z.string().min(1).max(160), rootRunId: z.string().min(1).max(160), parentRunId: z.string().min(1).max(160), roleId: z.string().min(1).max(80), isolation: z.enum(["scoped", "blind", "execution"]), contextManifest: z.object({ projectId: z.string().min(1).max(120), projectBriefRevision: z.string().min(1).max(240), researchEntityIds: z.array(z.string().min(1).max(240)).max(64), sourceUris: z.array(z.string().min(1).max(2_000)).max(64), projectionHash: z.string().min(1).max(240) }), budget: z.object({ maxDurationMs: z.number().positive(), maxToolCalls: z.number().int().positive(), maxCost: z.number().positive().optional() }) }).optional(),
       }).parse(commandContext);
@@ -245,13 +247,20 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
       }
       if (knowledge.getChatSession(sessionId)) knowledge.setChatSessionContext(sessionId, { projectId: activeProject.id, ...resolvedContext });
       const routeStatus = await modelStatus();
-      if (routeStatus.mode === "live" && !routeStatus.ready) throw new Error(routeStatus.reason);
-      let liveRoute: ReturnType<typeof createLiveRoute> | undefined;
-      if (routeStatus.mode === "live" && routeStatus.providerId && routeStatus.modelId) {
-        const apiKey = credentials.get(routeStatus.providerId as ModelProviderId, "apiKey") ?? (routeStatus.providerId === "custom" ? "xiling-local" : undefined);
+      const primaryRoute = routeStatus.primary;
+      const turnOverride: ModelRouteSettings | undefined = !childRole && command.modelRoute
+        ? { ...command.modelRoute, reasoning: primaryRoute?.reasoning ?? "medium", inputModalities: resolveModelCatalogEntry(command.modelRoute.providerId, command.modelRoute.modelId).inputModalities.filter((item): item is "text" | "image" => item === "text" || item === "image") }
+        : undefined;
+      const requestedRoute = selectModelRoute(routeStatus, { ...(childRole ? { roleId: childRole.id } : {}), ...(turnOverride ? { turnOverride } : {}) }).route;
+      const useFixtureModel = options.fixtureModel ?? Boolean(process.env.VITEST || process.env.NODE_ENV === "test");
+      if (!requestedRoute && !useFixtureModel) throw new Error("selection_required");
+      if (requestedRoute && !credentials.status(requestedRoute.providerId).configured) throw new Error("credential_required");
+      let selectedRuntimeRoute: ReturnType<typeof createLiveRoute> | ReturnType<typeof createOfflineRoute> | undefined;
+      if (requestedRoute) {
+        const apiKey = credentials.get(requestedRoute.providerId as ModelProviderId, "apiKey") ?? (requestedRoute.providerId === "custom" ? "xiling-local" : undefined);
         if (!apiKey) throw new Error("credential_required");
-        liveRoute = createLiveRoute(routeStatus.providerId, routeStatus.modelId, apiKey, routeStatus.providerId === "custom" ? customRouteConfig() : undefined, routeStatus.selectedModel?.inputModalities.filter((item): item is "text" | "image" => item === "text" || item === "image"));
-      }
+        selectedRuntimeRoute = createLiveRoute(requestedRoute.providerId, requestedRoute.modelId, apiKey, requestedRoute.providerId === "custom" ? customRouteConfig() : undefined, requestedRoute.inputModalities);
+      } else selectedRuntimeRoute = createOfflineRoute();
       const resolveImages = (items: typeof attachments) => items.map((attachment) => {
         const stored = agentSessionStore.getAttachment(attachment.id);
         if (!stored || stored.projectId !== activeProject.id || stored.sha256 !== attachment.sha256) throw new Error("Agent image attachment is missing or failed integrity validation");
@@ -338,8 +347,8 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
           return tool.execute(...args);
         } }));
       }
-      const modelContextWindow = liveRoute?.contextWindow ?? 128_000;
-      const maxOutputTokens = liveRoute?.maxOutputTokens ?? 8_192;
+      const modelContextWindow = selectedRuntimeRoute.contextWindow;
+      const maxOutputTokens = selectedRuntimeRoute.maxOutputTokens;
       const projectionHash = researchProjection.projection.projectionHash;
       const cacheKey = contextAssemblyCache.key({ projectId: activeProject.id, sessionId, projectionHash, prompt, history: historyRecords.map(({ id, role, text }) => [id, role, text]), modelContextWindow, maxOutputTokens, skills: activatedSkills.entries.map(({ name, version }) => [name, version]), tools: activeTools.map((tool) => tool.name) });
       let contextAssembly = contextAssemblyCache.get(cacheKey);
@@ -358,8 +367,8 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
         : undefined;
       const runtime = new PiRuntimeAdapter({
         sessionId,
-        systemPrompt: liveRoute ? [coreRules, projectPrompt, contextAssembly.canvasText ? `科研图局部上下文：\n${contextAssembly.canvasText}` : "当前科研图选择没有可用上下文。", historyLookupPrompt, activatedSkills.prompt ? `本轮按需加载的 Skill：\n${activatedSkills.prompt}` : "本轮没有命中额外 Skill。"].filter(Boolean).join("\n") : `你是汐灵 OS 的离线演示 Agent。当前项目：${activeProject.name}。`,
-        ...(liveRoute ? { route: liveRoute } : {}),
+        systemPrompt: [coreRules, projectPrompt, contextAssembly.canvasText ? `科研图局部上下文：\n${contextAssembly.canvasText}` : "当前科研图选择没有可用上下文。", historyLookupPrompt, activatedSkills.prompt ? `本轮按需加载的 Skill：\n${activatedSkills.prompt}` : "本轮没有命中额外 Skill。"].filter(Boolean).join("\n"),
+        route: selectedRuntimeRoute,
         initialMessages: contextAssembly.history.map((message) => {
           const descriptors = historyAttachments.get(message.id) ?? [];
           const images = message.id === historicalImageMessageId ? resolveImages(descriptors) : [];
@@ -367,9 +376,9 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
           return { role: message.role, text: `${message.text}${attachmentNote}`, timestamp: message.timestamp, ...(images.length ? { images } : {}) };
         }),
         contextPolicy: "deduplicate-adjacent",
-        ...(liveRoute ? { reasoning: routeStatus.reasoning } : {}),
+        reasoning: requestedRoute?.reasoning ?? "off",
         onUsage: async (usage) => {
-          const normalized = { providerId: routeStatus.providerId ?? "xiling-offline", modelId: routeStatus.modelId ?? "fixture", inputTokens: usage.input, outputTokens: usage.output, cacheReadTokens: usage.cacheRead, cacheWriteTokens: usage.cacheWrite, reasoningTokens: usage.reasoning ?? 0, totalTokens: usage.totalTokens, cost: usage.cost.total } satisfies RuntimeUsageInput;
+          const normalized = { providerId: requestedRoute?.providerId ?? "xiling-test-fixture", modelId: requestedRoute?.modelId ?? "fixture", inputTokens: usage.input, outputTokens: usage.output, cacheReadTokens: usage.cacheRead, cacheWriteTokens: usage.cacheWrite, reasoningTokens: usage.reasoning ?? 0, totalTokens: usage.totalTokens, cost: usage.cost.total } satisfies RuntimeUsageInput;
           await onUsage(normalized);
           await tokenLedger.record({ sessionId, providerId: normalized.providerId, modelId: normalized.modelId, inputTokens: normalized.inputTokens, outputTokens: normalized.outputTokens, cacheReadTokens: normalized.cacheReadTokens, cacheWriteTokens: normalized.cacheWriteTokens, reasoningTokens: normalized.reasoningTokens, totalTokens: normalized.totalTokens, cost: normalized.cost, projectionHash, contextEstimatedTokens: contextAssembly.trace.estimatedInputTokens, contextAvailableTokens: contextAssembly.trace.availableInputTokens, contextCacheHit: contextAssembly.trace.cache === "hit", activatedCapabilityCount: contextAssembly.trace.activatedCapabilityIds.length, activatedSkillCount: contextAssembly.trace.activatedSkillNames.length, omittedHistoryCount: contextAssembly.trace.omittedHistoryCount, contextSourceCoverage: contextAssembly.trace.sourceCoverage.ratio, contextDuplicateHistoryCount: contextAssembly.trace.deduplicatedHistoryCount });
         },
@@ -504,10 +513,11 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
     }
   });
   registerWorkspaceRoutes(app, { knowledge, agentSessions: agentSessionStore, onChatSessionCreated: (session) => agentHarness.createSession({ id: session.id, projectId: session.projectId }), onChatSessionArchived: (session) => agentHarness.archiveSession(session.id), validateDomainIds: (ids) => scienceDomains.validate(ids), validateResearchContext: async (projectId, context) => projectResearchContext(projectId, context) });
-  registerAgentCenterRoutes(app, { harness: agentHarness, store: agentSessionStore, ready: workflowProjectionReady, projectExists: (projectId) => Boolean(knowledge.getProject(projectId)), projectActive: (projectId) => { const project = knowledge.getProject(projectId); return Boolean(project && project.status !== "archived"); }, sessionExists: (sessionId, projectId) => knowledge.getChatSession(sessionId)?.projectId === projectId, sessionTitle: (sessionId) => knowledge.getChatSession(sessionId)?.title, listAgentRoles: () => agentRoles.list().map(({ systemPrompt: _systemPrompt, canDelegate: _canDelegate, ...role }) => role), acceptedInputModalities: async () => {
+  registerAgentCenterRoutes(app, { harness: agentHarness, store: agentSessionStore, ready: workflowProjectionReady, projectExists: (projectId) => Boolean(knowledge.getProject(projectId)), projectActive: (projectId) => { const project = knowledge.getProject(projectId); return Boolean(project && project.status !== "archived"); }, sessionExists: (sessionId, projectId) => knowledge.getChatSession(sessionId)?.projectId === projectId, sessionTitle: (sessionId) => knowledge.getChatSession(sessionId)?.title, listAgentRoles: () => agentRoles.list().map(({ systemPrompt: _systemPrompt, canDelegate: _canDelegate, ...role }) => role), acceptedInputModalities: async (override) => {
+    if (override) return resolveModelCatalogEntry(override.providerId as ModelProviderId, override.modelId).inputModalities.filter((modality) => modality === "text" || modality === "image");
     const status = await modelStatus();
-    if (!status.ready || !status.selectedModel) return ["text"];
-    return status.selectedModel.inputModalities.filter((modality) => modality === "text" || modality === "image");
+    if (!status.ready || !status.primary?.selectedModel) return ["text"];
+    return status.primary.selectedModel.inputModalities.filter((modality) => modality === "text" || modality === "image");
   } });
   app.addHook("onClose", async () => { try { await projectWorkflowReady; } catch { /* initialization failure is already surfaced by routes */ } });
   const settleProjectWorkflow = async (workflow: NonNullable<ReturnType<typeof projectWorkflow.get>>) => {

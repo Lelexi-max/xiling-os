@@ -499,6 +499,7 @@ R0–R8 现代化开发同时受[科研内核架构宪法](docs/architecture/res
 - [ADR 0034：统一内容寻址 Artifact Registry](docs/adr/0034-content-addressed-artifact-registry.md)
 - [ADR 0035：通用执行内核与领域组合边界](docs/adr/0035-generic-execution-and-domain-composition.md)
 - [ADR 0036：隔离子智能体与结构化 Handoff](docs/adr/0036-isolated-multi-agent-handoffs.md)
+- [ADR 0037：统一真实模型路由与角色级覆盖](docs/adr/0037-real-model-routing-and-role-overrides.md)
 - [Gate 4.5：Agent 中枢架构纠偏](docs/gate-4.5-agent-center-correction.md)
 - [架构现代化计划](docs/architecture/modernization-plan.md)
 - [开源复用与许可证矩阵](docs/oss-evaluation.md)
@@ -512,6 +513,7 @@ R0–R8 现代化开发同时受[科研内核架构宪法](docs/architecture/res
 - **2026-08-28**：完成 R3–R7 本地架构切片：新增通用 Execution Plan/Spec/Approval/Receipt 与 SQLite 幂等协调；上下文 trace 记录 token 组成、来源覆盖和历史去重；盲审/执行子智能体改为严格 ContextManifest 与 JSON Handoff；新增“需要关注”视图；以表格实验领域验证核心不依赖海洋类型。确定性离线门禁现为 17 个包、33 个测试文件、145 项测试。
 - **2026-08-28**：补齐 R8 的 macOS 容器部分：Runner 从固定 Python 基础镜像构建，基础分析、Argo 科研闭环与四连接器适配器均在 `--network none` 下通过；真实 Windows 11/WSL2、签名介质和真实科研试用仍保持发布阻塞，未以本地结果冒充完成。
 - **2026-08-28**：精简多智能体目录：六个重叠角色收敛为研究探索、领域执行、独立审查三个基础角色；审查差异改为动态 rubric，领域约束来自项目 Manifest；委派工具只暴露当前意图命中的角色，并删除 `multi-agent` 包内重复角色事实源。
+- **2026-08-28**：取消产品离线/真实双模式，模型解析改为 Chat 本轮覆盖、子智能体角色路由、主智能体默认路由三层；设置页拆分 API 连接和模型分配，未配置真实主路由时正式调用明确失败。
 - **2026-08-27**：Agent 运行图改为 Flowith 式低密度对话画布：默认当前 Session，每轮只显示研究指令与关键回答，执行细节折叠；新增沿节点继续、组合引用、祖先路径聚焦、自由拖动、项目全景与画布内 Composer。
 - **2026-08-27**：完成科研真实性与人机功效纠偏：Claim/ClaimRevision 采用待审提案写入；Evidence 保存精确摘录、定位、局限并以 `ASSERTS` 指向具体主张版本；Context 新增按需 `SourceContentResolver`；项目运行改读正式 Workflow、Chat 改读真实 Artifact；科研画布增加一跳聚焦、关系筛选和来源跳转；删除旧 Gate 3 路由、Web 视图、聚合包和 Server 依赖。
 - **2026-08-27**：完成 RG-5 本地收口：旧 Canvas 类型化文档契约和测试一并撤下；Wiki、Chat、文献工作台与 Scientific Canvas 只经 Research Graph/Agent Store/Knowledge 窄边界协作；127 项测试、完整 smoke、生产构建与 4317/4318 浏览器验收通过。真实 Windows 11/WSL2、签名安装介质和真实科研试用继续作为发布门禁。

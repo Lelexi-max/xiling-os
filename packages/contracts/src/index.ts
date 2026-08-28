@@ -652,22 +652,33 @@ export interface ProviderConnectionTestResult {
   testedAt: string;
 }
 
-export interface ModelRuntimeSettings {
-  mode: "offline" | "live";
-  providerId?: ModelProviderId;
-  modelId?: string;
+export interface ModelRouteSettings {
+  providerId: ModelProviderId;
+  modelId: string;
   inputModalities?: Array<"text" | "image">;
   capabilitySource?: "pi-catalog" | "native-probe";
   capabilitiesVerifiedAt?: string;
   reasoning: "off" | "low" | "medium" | "high";
+}
+
+export interface ModelRuntimeSettings {
+  primary?: ModelRouteSettings;
+  roleRoutes: Record<string, ModelRouteSettings>;
   updatedAt: string;
 }
 
-export interface ModelRuntimeStatus extends ModelRuntimeSettings {
+export interface ModelRouteStatus extends ModelRouteSettings {
   selectedModel?: ModelCatalogEntry;
   credentialConfigured: boolean;
   ready: boolean;
-  reason: "offline" | "selection_required" | "credential_required" | "ready";
+  reason: "credential_required" | "ready";
+}
+
+export interface ModelRuntimeStatus extends ModelRuntimeSettings {
+  primary?: ModelRouteStatus;
+  roleRoutes: Record<string, ModelRouteStatus>;
+  ready: boolean;
+  reason: "selection_required" | "credential_required" | "ready";
 }
 
 export type AgentStreamEvent =

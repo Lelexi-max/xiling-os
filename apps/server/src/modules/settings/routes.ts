@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { credentialIdSchema, credentialValuesSchema, modelRuntimeSchema, providerTestSchema } from "@xiling/api-contracts";
-import type { InstalledSkillsResponse, ModelProviderId, ModelRuntimeStatus } from "@xiling/contracts";
+import type { InstalledSkillsResponse, ModelProviderId, ModelRouteSettings, ModelRouteStatus, ModelRuntimeSettings, ModelRuntimeStatus } from "@xiling/contracts";
 import type { CredentialStore } from "@xiling/credentials";
 import { PiRuntimeAdapter, createLiveRoute, findKnownModelCatalogEntry, listRecommendedModels, resolveModelCatalogEntry, type CustomProviderRouteConfig, type ModelRuntimeStore } from "@xiling/pi-runtime";
 
@@ -19,11 +19,16 @@ export class ModelSettingsService {
   async status(): Promise<ModelRuntimeStatus> {
     await Promise.all([this.credentialsReady, this.modelRuntimeReady]);
     const settings = this.modelRuntime.get();
-    const catalogModel = settings.providerId && settings.modelId ? resolveModelCatalogEntry(settings.providerId, settings.modelId) : undefined;
-    const selectedModel = catalogModel && settings.inputModalities ? { ...catalogModel, inputModalities: settings.inputModalities } : catalogModel;
-    const credentialConfigured = settings.providerId ? this.credentials.status(settings.providerId).configured : false;
-    const reason = settings.mode === "offline" ? "offline" : !selectedModel ? "selection_required" : !credentialConfigured ? "credential_required" : "ready";
-    return { ...settings, ...(selectedModel ? { selectedModel } : {}), credentialConfigured, ready: reason === "ready", reason };
+    const resolveStatus = (route: ModelRouteSettings): ModelRouteStatus => {
+      const catalogModel = resolveModelCatalogEntry(route.providerId, route.modelId);
+      const selectedModel = route.inputModalities ? { ...catalogModel, inputModalities: route.inputModalities } : catalogModel;
+      const credentialConfigured = this.credentials.status(route.providerId).configured;
+      return { ...route, selectedModel, credentialConfigured, ready: credentialConfigured, reason: credentialConfigured ? "ready" : "credential_required" };
+    };
+    const primary = settings.primary ? resolveStatus(settings.primary) : undefined;
+    const roleRoutes = Object.fromEntries(Object.entries(settings.roleRoutes).map(([roleId, route]) => [roleId, resolveStatus(route)]));
+    const reason = !primary ? "selection_required" : !primary.ready ? "credential_required" : "ready";
+    return { ...(primary ? { primary } : {}), roleRoutes, updatedAt: settings.updatedAt, ready: reason === "ready", reason };
   }
   customRouteConfig(): CustomProviderRouteConfig {
     const baseUrl = this.credentials.get("custom", "baseUrl"); const apiStyle = this.credentials.get("custom", "apiStyle");
@@ -34,33 +39,37 @@ export class ModelSettingsService {
     const displayName = this.credentials.get("custom", "displayName");
     return { baseUrl: parsedUrl.toString().replace(/\/$/, ""), apiStyle, ...(displayName ? { displayName } : {}) };
   }
-  async setRuntime(input: { mode: "offline" | "live"; reasoning: "off" | "low" | "medium" | "high"; providerId?: ModelProviderId; modelId?: string; inputModalities?: Array<"text" | "image"> }) {
+  async setRuntime(input: Omit<ModelRuntimeSettings, "updatedAt">) {
     await Promise.all([this.credentialsReady, this.modelRuntimeReady]);
-    if (!input.providerId || !input.modelId) { await this.modelRuntime.set(input); return this.status(); }
-    const requested = [...new Set(input.inputModalities ?? ["text"])] as Array<"text" | "image">;
-    let capabilitySource: "pi-catalog" | "native-probe" | undefined;
-    let capabilitiesVerifiedAt: string | undefined;
-    if (requested.includes("image")) {
-      const known = findKnownModelCatalogEntry(input.providerId, input.modelId);
-      if (known) {
-        if (!known.inputModalities.includes("image")) throw new Error("Pi 模型目录明确标记该模型不支持原生图像输入");
-        capabilitySource = "pi-catalog";
-        capabilitiesVerifiedAt = new Date().toISOString();
-      } else {
-        const previous = this.modelRuntime.get();
-        const reusableProbe = previous.providerId === input.providerId && previous.modelId === input.modelId && previous.capabilitySource === "native-probe" && previous.inputModalities?.includes("image") && previous.capabilitiesVerifiedAt;
-        if (reusableProbe) {
-          capabilitySource = "native-probe";
-          capabilitiesVerifiedAt = previous.capabilitiesVerifiedAt;
-        } else {
-          if (input.mode !== "live") throw new Error("目录外模型必须在真实模式下完成一次原生图像探针");
-          await this.probeNativeImage(input.providerId, input.modelId);
-          capabilitySource = "native-probe";
+    const previous = this.modelRuntime.get();
+    const normalizeRoute = async (route: ModelRouteSettings): Promise<ModelRouteSettings> => {
+      if (!this.credentials.status(route.providerId).configured) throw new Error(`请先保存 ${route.providerId} 的 API 连接`);
+      const requested = [...new Set(route.inputModalities ?? ["text"])] as Array<"text" | "image">;
+      let capabilitySource: "pi-catalog" | "native-probe" | undefined;
+      let capabilitiesVerifiedAt: string | undefined;
+      if (requested.includes("image")) {
+        const known = findKnownModelCatalogEntry(route.providerId, route.modelId);
+        if (known) {
+          if (!known.inputModalities.includes("image")) throw new Error("Pi 模型目录明确标记该模型不支持原生图像输入");
+          capabilitySource = "pi-catalog";
           capabilitiesVerifiedAt = new Date().toISOString();
+        } else {
+          const existing = [previous.primary, ...Object.values(previous.roleRoutes)].find((candidate) => candidate?.providerId === route.providerId && candidate.modelId === route.modelId && candidate.capabilitySource === "native-probe" && candidate.inputModalities?.includes("image") && candidate.capabilitiesVerifiedAt);
+          if (existing?.capabilitiesVerifiedAt) {
+            capabilitySource = "native-probe";
+            capabilitiesVerifiedAt = existing.capabilitiesVerifiedAt;
+          } else {
+            await this.probeNativeImage(route.providerId, route.modelId);
+            capabilitySource = "native-probe";
+            capabilitiesVerifiedAt = new Date().toISOString();
+          }
         }
       }
-    }
-    await this.modelRuntime.set({ ...input, inputModalities: requested, ...(capabilitySource && capabilitiesVerifiedAt ? { capabilitySource, capabilitiesVerifiedAt } : {}) });
+      return { providerId: route.providerId, modelId: route.modelId, reasoning: route.reasoning, inputModalities: requested, ...(capabilitySource && capabilitiesVerifiedAt ? { capabilitySource, capabilitiesVerifiedAt } : {}) };
+    };
+    const primary = await normalizeRoute(input.primary!);
+    const roleRoutes = Object.fromEntries(await Promise.all(Object.entries(input.roleRoutes).map(async ([roleId, route]) => [roleId, await normalizeRoute(route)] as const)));
+    await this.modelRuntime.set({ primary, roleRoutes });
     return this.status();
   }
 
@@ -115,11 +124,12 @@ export function registerSettingsRoutes(app: FastifyInstance, service: ModelSetti
     const result = { ok: Boolean(text.trim()) && !failure, providerId: selectedProvider, modelId, latencyMs: Date.now() - started, message: failure || `连接成功，模型返回：${text.trim().slice(0, 80)}`, testedAt: new Date().toISOString() };
     return reply.code(result.ok ? 200 : 422).send(result);
   });
-  app.get("/api/settings/models", async () => ({ catalog: listRecommendedModels(), runtime: await service.status() }));
+  app.get("/api/settings/models", async () => ({ catalog: listRecommendedModels(), runtime: await service.status(), configuredProviderIds: credentials.listStatus().filter((provider) => provider.category === "model" && provider.configured).map((provider) => provider.id) }));
   app.put("/api/settings/models", async (request, reply) => {
     const parsed = modelRuntimeSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-    try { return await service.setRuntime({ mode: parsed.data.mode, reasoning: parsed.data.reasoning, ...(parsed.data.providerId && parsed.data.modelId ? { providerId: parsed.data.providerId, modelId: parsed.data.modelId } : {}), ...(parsed.data.inputModalities ? { inputModalities: parsed.data.inputModalities } : {}) }); }
+    const normalizeRoute = (route: typeof parsed.data.primary): ModelRouteSettings => ({ providerId: route.providerId, modelId: route.modelId, reasoning: route.reasoning, ...(route.inputModalities ? { inputModalities: route.inputModalities } : {}) });
+    try { return await service.setRuntime({ primary: normalizeRoute(parsed.data.primary), roleRoutes: Object.fromEntries(Object.entries(parsed.data.roleRoutes).map(([roleId, route]) => [roleId, normalizeRoute(route)])) }); }
     catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) }); }
   });
   app.get("/api/settings/skills", async (_request, reply) => {

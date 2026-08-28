@@ -118,7 +118,7 @@ describe("server vertical slice", () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
       snapshot = (await app.inject({ method: "GET", url: `/api/agent-center/runs/${runId}?projectId=ocean-heatwave` })).json();
     }
-    expect(snapshot).toMatchObject({ run: { status: "completed" }, entries: [expect.objectContaining({ kind: "user" }), expect.objectContaining({ kind: "assistant" })], usage: [expect.objectContaining({ providerId: "xiling-offline", modelId: "fixture" })] });
+    expect(snapshot).toMatchObject({ run: { status: "completed" }, entries: [expect.objectContaining({ kind: "user" }), expect.objectContaining({ kind: "assistant" })], usage: [expect.objectContaining({ providerId: "xiling-test-fixture", modelId: "fixture" })] });
     const replay = await app.inject({ method: "GET", url: `/api/agent-center/runs/${runId}/events?projectId=ocean-heatwave&afterSequence=1` });
     expect(replay.statusCode).toBe(200);
     expect(replay.body).toContain("run.completed");
@@ -422,25 +422,25 @@ describe("server vertical slice", () => {
     await app.close();
   });
 
-  it("keeps model routing offline by default and fails formal Agent runs without the selected credential", async () => {
+  it("requires a real primary route and never exposes a product offline mode", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "xiling-model-settings-"));
-    const first = createApp({ dataRoot });
+    const first = createApp({ dataRoot, fixtureModel: false });
     const initial = await first.inject({ method: "GET", url: "/api/settings/models" });
-    expect(initial.json()).toMatchObject({ runtime: { mode: "offline", ready: false, reason: "offline" }, catalog: expect.any(Array) });
+    expect(initial.json()).toMatchObject({ runtime: { ready: false, reason: "selection_required", roleRoutes: {} }, catalog: expect.any(Array) });
+    expect(initial.body).not.toContain('"mode"');
     const model = initial.json().catalog[0] as { providerId: "openai" | "anthropic" | "google" | "openrouter"; id: string };
-    const enabled = await first.inject({ method: "PUT", url: "/api/settings/models", payload: { mode: "live", providerId: model.providerId, modelId: model.id, reasoning: "low" } });
-    expect(enabled.json()).toMatchObject({ mode: "live", providerId: model.providerId, modelId: model.id, ready: false, reason: "credential_required" });
-    const liveSession = await createAgentChatSession(first, "ocean-heatwave", "缺少密钥");
-    const blocked = await runAgentTurn(first, { projectId: "ocean-heatwave", sessionId: liveSession.id, prompt: "不会发出公网请求", clientCommandId: "live-without-key" });
-    expect(blocked.run).toMatchObject({ status: "failed", error: "credential_required" });
+    const blockedSave = await first.inject({ method: "PUT", url: "/api/settings/models", payload: { primary: { providerId: model.providerId, modelId: model.id, reasoning: "low" }, roleRoutes: {} } });
+    expect(blockedSave.statusCode).toBe(400);
+    const unconfiguredSession = await createAgentChatSession(first, "ocean-heatwave", "缺少主模型");
+    const blocked = await runAgentTurn(first, { projectId: "ocean-heatwave", sessionId: unconfiguredSession.id, prompt: "不会发出公网请求", clientCommandId: "without-route" });
+    expect(blocked.run).toMatchObject({ status: "failed", error: "selection_required" });
+    expect((await first.inject({ method: "PUT", url: `/api/settings/providers/${model.providerId}`, payload: { values: { apiKey: "fixture-key" } } })).statusCode).toBe(200);
+    const configured = await first.inject({ method: "PUT", url: "/api/settings/models", payload: { primary: { providerId: model.providerId, modelId: model.id, reasoning: "low" }, roleRoutes: { "research-explorer": { providerId: model.providerId, modelId: model.id, reasoning: "medium" } } } });
+    expect(configured.json()).toMatchObject({ ready: true, reason: "ready", primary: { providerId: model.providerId, modelId: model.id }, roleRoutes: { "research-explorer": { modelId: model.id } } });
     await first.close();
 
-    const restored = createApp({ dataRoot });
-    expect((await restored.inject({ method: "GET", url: "/api/settings/models" })).json()).toMatchObject({ runtime: { mode: "live", modelId: model.id, reason: "credential_required" } });
-    const offline = await restored.inject({ method: "PUT", url: "/api/settings/models", payload: { mode: "offline", providerId: model.providerId, modelId: model.id, reasoning: "medium" } });
-    expect(offline.json()).toMatchObject({ mode: "offline", reason: "offline" });
-    const offlineSession = await createAgentChatSession(restored, "ocean-heatwave", "恢复离线");
-    expect((await runAgentTurn(restored, { projectId: "ocean-heatwave", sessionId: offlineSession.id, prompt: "本地", clientCommandId: "offline-again" })).run.status).toBe("completed");
+    const restored = createApp({ dataRoot, fixtureModel: false });
+    expect((await restored.inject({ method: "GET", url: "/api/settings/models" })).json()).toMatchObject({ runtime: { ready: true, primary: { modelId: model.id }, roleRoutes: { "research-explorer": { modelId: model.id } } } });
     await restored.close();
   });
 

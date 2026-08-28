@@ -32,7 +32,7 @@ export interface AgentCenterRouteDependencies {
   sessionExists(sessionId: string, projectId: string): boolean;
   sessionTitle?(sessionId: string): string | undefined;
   listAgentRoles?(): Array<{ id: string; title: string; description: string; allowedCapabilities: string[]; defaultIsolation: string; dynamic?: boolean }>;
-  acceptedInputModalities(): Promise<ModelModality[]>;
+  acceptedInputModalities(route?: { providerId: string; modelId: string }): Promise<ModelModality[]>;
 }
 
 export function registerAgentCenterRoutes(app: FastifyInstance, dependencies: AgentCenterRouteDependencies): void {
@@ -98,13 +98,13 @@ export function registerAgentCenterRoutes(app: FastifyInstance, dependencies: Ag
   // larger than the 20 MB raw attachment budget enforced below.
   app.post("/api/agent-center/runs", { bodyLimit: 32 * 1024 * 1024 }, async (request, reply) => {
     await ready;
-    const parsed = z.object({ sessionId: id, projectId: id, prompt: z.string().min(1).max(50_000), clientCommandId: id, context: z.object({ activeNodeId: id, quotedNodeIds: z.array(id).max(12) }).optional(), attachments: z.array(attachmentUpload).max(4).optional() }).safeParse(request.body);
+    const parsed = z.object({ sessionId: id, projectId: id, prompt: z.string().min(1).max(50_000), clientCommandId: id, modelRoute: z.object({ providerId: z.enum(["openai", "anthropic", "google", "openrouter", "deepseek", "xai", "mistral", "moonshotai", "zai", "groq", "custom"]), modelId: z.string().trim().min(1).max(240) }).optional(), context: z.object({ activeNodeId: id, quotedNodeIds: z.array(id).max(12) }).optional(), attachments: z.array(attachmentUpload).max(4).optional() }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     if (!activeSessionInProject(parsed.data.sessionId, parsed.data.projectId)) return reply.code(404).send({ error: "Agent session, chat session, or project not found" });
     const uploads = parsed.data.attachments ?? [];
     const totalSize = uploads.reduce((sum, attachment) => sum + attachment.size, 0);
     if (totalSize > 20 * 1024 * 1024) return reply.code(413).send({ error: "附件总大小不能超过 20 MB" });
-    const accepted = new Set(await acceptedInputModalities());
+    const accepted = new Set(await acceptedInputModalities(parsed.data.modelRoute));
     const unavailable = [...new Set(uploads.map((attachment) => attachment.modality).filter((modality) => !accepted.has(modality)))];
     if (unavailable.length) return reply.code(409).send({ error: `当前模型与 Pi 传输层不支持原生${unavailable.join("、")}输入`, code: "unsupported_native_modality", acceptedInputModalities: [...accepted] });
     const attachments = [];
@@ -115,7 +115,7 @@ export function registerAgentCenterRoutes(app: FastifyInstance, dependencies: Ag
       if (!hasNativeImageSignature(data, upload.mimeType)) return reply.code(415).send({ error: `附件内容与图像格式不符：${upload.name}` });
       attachments.push({ id: randomUUID(), name: upload.name, modality: "image" as const, mimeType: upload.mimeType, size: data.byteLength, sha256: createHash("sha256").update(data).digest("hex"), data });
     }
-    try { return reply.code(202).send(harness.startTurn({ sessionId: parsed.data.sessionId, prompt: parsed.data.prompt, clientCommandId: parsed.data.clientCommandId, ...(attachments.length ? { attachments } : {}), context: { projectId: parsed.data.projectId, ...(parsed.data.context ? { context: parsed.data.context } : {}) } })); }
+    try { return reply.code(202).send(harness.startTurn({ sessionId: parsed.data.sessionId, prompt: parsed.data.prompt, clientCommandId: parsed.data.clientCommandId, ...(attachments.length ? { attachments } : {}), context: { projectId: parsed.data.projectId, ...(parsed.data.modelRoute ? { modelRoute: parsed.data.modelRoute } : {}), ...(parsed.data.context ? { context: parsed.data.context } : {}) } })); }
     catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) }); }
   });
 
