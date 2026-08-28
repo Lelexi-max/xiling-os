@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentRunEvent, SqliteAgentSessionStore } from "@xiling/agent-harness";
-import type { EvidenceRecord, Gate4Project, ProjectResearchWorkflow, ResearchEntityStatus, WikiPageRevision } from "@xiling/contracts";
+import type { EvidenceRecord, ResearchProject, ResearchEntityStatus, WikiPageRevision } from "@xiling/contracts";
+import type { ProjectResearchWorkflow } from "@xiling/domain-ocean";
 import type { KnowledgeService, ResearchProjectionOutboxRecord } from "@xiling/knowledge";
 import type { ResearchGraphChangeSet, ResearchGraphEntityInput, ResearchGraphRelationInput, ResearchGraphStore } from "@xiling/research-graph";
 import type { SqliteProjectWorkflowRepository, WorkflowProjectionOutboxRecord } from "./project-workflow.js";
@@ -29,7 +30,7 @@ class ChangeSetBuilder {
   build(): ResearchGraphChangeSet { return { projectId: this.projectId, nodes: [...this.nodes.values()], relations: [...this.relations.values()] }; }
 }
 
-function addProject(builder: ChangeSetBuilder, project: Gate4Project): void {
+function addProject(builder: ChangeSetBuilder, project: ResearchProject): void {
   builder.node({ id: project.id, kind: "Project", title: project.name, summary: project.description, status: project.status === "paused" ? "pending" : project.status, properties: {}, createdAt: project.createdAt, updatedAt: project.updatedAt });
   const rq = builder.node({ id: questionId(project.id), kind: "ResearchQuestion", title: project.researchQuestion, summary: project.researchQuestion, status: "active", properties: {}, createdAt: project.createdAt, updatedAt: project.updatedAt });
   builder.relation("CONTAINS", project.id, rq);
@@ -44,10 +45,10 @@ function addArtifact(builder: ChangeSetBuilder, uri: string, createdAt: string):
   return version;
 }
 
-export function knowledgeRecordToChangeSet(record: ResearchProjectionOutboxRecord, currentProject?: Gate4Project): ResearchGraphChangeSet {
+export function knowledgeRecordToChangeSet(record: ResearchProjectionOutboxRecord, currentProject?: ResearchProject): ResearchGraphChangeSet {
   const builder = new ChangeSetBuilder(record.projectId);
   if (record.eventType === "knowledge.project.upserted") {
-    addProject(builder, record.payload as Gate4Project);
+    addProject(builder, record.payload as ResearchProject);
     return builder.build();
   }
   if (!currentProject) throw new Error(`Knowledge projection requires project ${record.projectId}`);
@@ -135,7 +136,7 @@ function workflowStatus(status: ProjectResearchWorkflow["status"]): ResearchEnti
 
 const runStatus = (status: NonNullable<ProjectResearchWorkflow["run"]>["status"]): ResearchEntityStatus => status === "queued" ? "pending" : status;
 
-export function workflowRecordToChangeSet(record: WorkflowProjectionOutboxRecord, project: Gate4Project): ResearchGraphChangeSet {
+export function workflowRecordToChangeSet(record: WorkflowProjectionOutboxRecord, project: ResearchProject): ResearchGraphChangeSet {
   const workflow = record.workflow;
   const builder = new ChangeSetBuilder(record.projectId);
   addProject(builder, project);

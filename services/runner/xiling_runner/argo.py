@@ -47,7 +47,7 @@ def create_argo_fixture(path: Path) -> Path:
         },
         coords={"N_PROF": np.arange(profiles), "N_LEVELS": np.arange(pressure.size)},
         attrs={
-            "title": "Xi Ling OS Gate 3 synthetic Argo profiles",
+            "title": "Xi Ling OS synthetic Argo profiles",
             "Conventions": "Argo-3.1 CF-1.10",
             "source": "deterministic synthetic fixture; not observational evidence",
         },
@@ -148,7 +148,7 @@ def run_argo_analysis(input_path: Path, plan: dict[str, object], output_dir: Pat
         s=90,
         edgecolors="white",
     )
-    axis.set(xlabel="Longitude (°E)", ylabel="Latitude (°N)", title="Gate 3 Argo mixed-layer depth")
+    axis.set(xlabel="Longitude (°E)", ylabel="Latitude (°N)", title="Argo mixed-layer depth")
     axis.grid(alpha=0.2)
     figure.colorbar(scatter, ax=axis, label="MLD (m)")
     figure.tight_layout()
@@ -202,7 +202,7 @@ def run_argo_analysis(input_path: Path, plan: dict[str, object], output_dir: Pat
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     crate = ROCrate()
-    crate.name = "Xi Ling OS Gate 3 Argo reproduction package"
+    crate.name = "Xi Ling OS Argo reproduction package"
     crate.description = "Approved slice plan, deterministic input, analysis artifacts, environment and reviewer report."
     crate.add_file(str(input_path), properties={"name": input_path.name, "sha256": sha256(input_path)})
     for artifact in [*artifacts, manifest_path]:

@@ -1,27 +1,26 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
-import { dirname, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { open } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import { ResearchAgentHarness, SqliteAgentSessionStore, type RuntimeUsageInput } from "@xiling/agent-harness";
 import { projectionSchema } from "@xiling/api-contracts";
 import { ContextAssemblyCache, assembleContext, createNodeContextCapsule, estimateContextTokens, projectResearchGraphContext, type ContextNodeContent } from "@xiling/context";
-import type { AgentStreamEvent, ConnectorMetadataSummary, ContextCapsule, ModelProviderId, OceanSubsetRequest, ResourceUri } from "@xiling/contracts";
+import type { AgentStreamEvent, ContextCapsule, ModelProviderId, ResourceUri } from "@xiling/contracts";
+import type { ConnectorMetadataSummary, OceanSubsetRequest } from "@xiling/domain-ocean";
 import { LazySkillCatalog, PiMcpGatewayManager, PiRuntimeAdapter, ModelRuntimeStore, TokenLedger, createLiveRoute } from "@xiling/pi-runtime";
-import { DockerProjectAnalysisRunner } from "./research-runner.js";
+import { DockerProjectAnalysisRunner, LocalWorkflowArtifactRegistrar } from "./research-runner.js";
 import { ConnectorWorkflowService, FixtureConnectorAdapter, JsonConnectorJobRepository, type ConnectorDownloader, type ConnectorMetadataProbe } from "@xiling/connectors";
 import { FileLiteratureCache, LiteratureSearchService, OpenAlexProvider, SemanticScholarProvider } from "@xiling/literature";
 import { KnowledgeService } from "@xiling/knowledge";
 import { LadybugResearchGraphStore } from "@xiling/research-graph";
-import { AgentRoleRegistry, MultiAgentOrchestrator, extractTaskResultText, type AgentTaskRequest, type DelegationMode } from "@xiling/multi-agent";
-import { ScienceDomainRegistry } from "@xiling/science-domains";
+import { AgentRoleRegistry, MultiAgentOrchestrator, createChildAccessPolicy, extractTaskResultText, type AgentTaskRequest, type DelegationMode } from "@xiling/multi-agent";
 import { CredentialStore } from "@xiling/credentials";
+import { LocalArtifactStore, type ArtifactRegistry } from "@xiling/artifacts";
+import { ExecutionCoordinator, SqliteExecutionRepository } from "@xiling/execution";
 import { DockerConnectorProbe, DockerConnectorRunner } from "./connector-runner.js";
 import { agentEntryReaderTool, agentHistorySearchTool, createResearchTools, researchCapabilityCatalog, researchCapabilityCatalogFor, researchDelegationTool, selectResearchCapabilities, selectResearchTools, shouldOfferResearchDelegation } from "./agent-tools.js";
 import { FixtureProjectAnalysisRunner, ProjectWorkflowService, SqliteProjectWorkflowRepository, type ProjectAnalysisRunner } from "./project-workflow.js";
@@ -31,7 +30,6 @@ import { ModelSettingsService, humanizeModelFailure, registerSettingsRoutes } fr
 import { registerConnectorRoutes } from "./modules/connectors/routes.js";
 import { registerWorkflowRoutes } from "./modules/workflows/routes.js";
 import { registerAgentCenterRoutes } from "./modules/agent-center/routes.js";
-import { createGate45CMigrationBackup, type Gate45CMigrationBackupManifest } from "./migration-backup.js";
 import { projectAgentWorkflowDraft, reconcileAgentWorkflowDrafts } from "./agent-workflow-projector.js";
 import { McpSettingsService } from "./modules/mcp/mcp-service.js";
 import { registerMcpSettingsRoutes } from "./modules/mcp/routes.js";
@@ -41,8 +39,12 @@ import { ScientificCanvasLayoutStore } from "./modules/research-graph/layout-sto
 import { ResearchGraphProposalStore } from "./modules/research-graph/proposal-store.js";
 import { SourceContentResolver } from "./source-content-resolver.js";
 import { registerScienceDomainRoutes } from "./modules/science-domains/routes.js";
+import { registerArtifactRoutes } from "./modules/artifacts/routes.js";
+import { registerAttentionRoutes } from "./modules/attention/routes.js";
+import { createTabularExecutionRunner, registerTabularExecutionRoutes } from "./modules/tabular/routes.js";
+import { createInstalledScienceDomainRegistry } from "./installed-domains.js";
 
-export function createApp(options: { dataRoot?: string; webRoot?: string; literatureFetch?: typeof fetch; literatureSleep?: (ms: number, signal?: AbortSignal) => Promise<void>; connectorProbe?: ConnectorMetadataProbe; connectorDownloader?: ConnectorDownloader; connectorMode?: "fixture" | "live"; projectAnalysisRunner?: ProjectAnalysisRunner } = {}) {
+export function createApp(options: { dataRoot?: string; webRoot?: string; literatureFetch?: typeof fetch; literatureSleep?: (ms: number, signal?: AbortSignal) => Promise<void>; connectorProbe?: ConnectorMetadataProbe; connectorDownloader?: ConnectorDownloader; connectorMode?: "fixture" | "live"; projectAnalysisRunner?: ProjectAnalysisRunner; artifactStore?: ArtifactRegistry } = {}) {
   const app = Fastify({ logger: false });
   void app.register(cors, { origin: /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/ });
   const webRoot = options.webRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
@@ -51,47 +53,35 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
     ? resolve(tmpdir(), `xiling-app-test-${randomUUID()}`)
     : resolve(dirname(fileURLToPath(import.meta.url)), "../../../data");
   const dataRoot = options.dataRoot ?? defaultDataRoot;
-  const gate4Root = resolve(dataRoot, "gate4");
-  const readManagedArtifact = async (uri: string, offsetBytes: number, maxBytes: number) => {
-    const match = /^artifact:\/\/workflow\/([a-zA-Z0-9-]+)\/(.+)$/.exec(uri);
-    if (!match) throw new Error("Only formal Workflow text Artifacts can be read through this tool");
-    const relative = match[2]!;
-    if (relative.includes("\\") || relative.split("/").includes("..") || !/\.(json|csv|md|txt|log)$/i.test(relative)) throw new Error("Artifact type or path is not safe for text inspection");
-    const root = resolve(gate4Root, "project-runs", match[1]!, "artifacts");
-    const path = resolve(root, relative);
-    if (!path.startsWith(`${root}${sep}`)) throw new Error("Artifact path escapes its managed root");
-    const handle = await open(path, "r");
-    try {
-      const stat = await handle.stat();
-      const length = Math.min(maxBytes, Math.max(0, stat.size - offsetBytes));
-      const buffer = Buffer.alloc(length);
-      const { bytesRead } = await handle.read(buffer, 0, length, offsetBytes);
-      return { uri, offsetBytes, text: buffer.subarray(0, bytesRead).toString("utf8"), truncated: offsetBytes + bytesRead < stat.size };
-    } finally { await handle.close(); }
+  const workspaceRoot = resolve(dataRoot, "workspace");
+  let artifactStore: ArtifactRegistry;
+  const readManagedArtifact = async (projectId: string, uri: string, offsetBytes: number, maxBytes: number) => {
+    if (!uri.startsWith("artifact://sha256/")) throw new Error("Only content-addressed managed Artifacts can be read through this tool");
+    const result = await artifactStore.read(projectId, uri, offsetBytes, maxBytes);
+    if (!/^(text\/|application\/(json|csv|xml|yaml|x-yaml))/i.test(result.record.mimeType)) throw new Error("Artifact is not a text format");
+    return { uri, offsetBytes, text: Buffer.from(result.data).toString("utf8"), truncated: result.truncated };
   };
-  const knowledgePath = resolve(gate4Root, "knowledge.sqlite");
-  const agentCenterPath = resolve(gate4Root, "agent-center.sqlite");
-  const migrationReportPath = resolve(gate4Root, "agent-migration-report.json");
-  let priorMigrationBackup: Gate45CMigrationBackupManifest | undefined;
-  if (existsSync(migrationReportPath)) {
-    try {
-      const candidate = (JSON.parse(readFileSync(migrationReportPath, "utf8")) as { backup?: Gate45CMigrationBackupManifest }).backup;
-      if (candidate?.gate === "4.5-C" && candidate.backupId.startsWith("gate-4.5-c-") && existsSync(resolve(candidate.directory, "manifest.json"))) priorMigrationBackup = candidate;
-    } catch { /* an unreadable legacy report must not suppress a fresh backup */ }
-  }
-  const migrationBackup = priorMigrationBackup ?? ((existsSync(knowledgePath) || existsSync(agentCenterPath)) ? createGate45CMigrationBackup({ gate4Root }) : undefined);
+  const knowledgePath = resolve(workspaceRoot, "knowledge.sqlite");
+  const agentCenterPath = resolve(workspaceRoot, "agent-center.sqlite");
   const knowledge = new KnowledgeService(knowledgePath);
-  const scienceDomains = new ScienceDomainRegistry();
+  artifactStore = options.artifactStore ?? new LocalArtifactStore(resolve(workspaceRoot, "artifacts.sqlite"), resolve(workspaceRoot, "artifact-blobs"));
+  if (!options.artifactStore) app.addHook("onClose", async () => (artifactStore as LocalArtifactStore).close());
+  registerArtifactRoutes(app, artifactStore, (projectId) => Boolean(knowledge.getProject(projectId)));
+  const executionRepository = new SqliteExecutionRepository(resolve(workspaceRoot, "executions.sqlite"));
+  const executionCoordinator = new ExecutionCoordinator(executionRepository, createTabularExecutionRunner(artifactStore));
+  app.addHook("onClose", async () => executionRepository.close());
+  registerTabularExecutionRoutes(app, { artifacts: artifactStore, executions: executionCoordinator, projectExists: (projectId) => Boolean(knowledge.getProject(projectId)) });
+  const scienceDomains = createInstalledScienceDomainRegistry();
   const installedCapabilityCatalog = researchCapabilityCatalogFor(scienceDomains.list().flatMap((domain) => domain.capabilities));
   registerScienceDomainRoutes(app, scienceDomains);
   const agentSessionStore = new SqliteAgentSessionStore(agentCenterPath);
-  const researchGraph = new LadybugResearchGraphStore(resolve(gate4Root, "research-graph.lbdb"));
-  const scientificCanvasLayout = new ScientificCanvasLayoutStore(resolve(gate4Root, "scientific-canvas-layout.sqlite"));
-  const researchGraphProposals = new ResearchGraphProposalStore(resolve(gate4Root, "research-graph-proposals.sqlite"));
+  const researchGraph = new LadybugResearchGraphStore(resolve(workspaceRoot, "research-graph.lbdb"));
+  const scientificCanvasLayout = new ScientificCanvasLayoutStore(resolve(workspaceRoot, "scientific-canvas-layout.sqlite"));
+  const researchGraphProposals = new ResearchGraphProposalStore(resolve(workspaceRoot, "research-graph-proposals.sqlite"));
   const credentials = new CredentialStore(resolve(dataRoot, "credentials"));
   const credentialsReady = credentials.initialize();
-  const modelRuntime = new ModelRuntimeStore(resolve(gate4Root, "model-runtime.json"));
-  const tokenLedger = new TokenLedger(resolve(gate4Root, "token-ledger.jsonl"));
+  const modelRuntime = new ModelRuntimeStore(resolve(workspaceRoot, "model-runtime.json"));
+  const tokenLedger = new TokenLedger(resolve(workspaceRoot, "token-ledger.jsonl"));
   const skillCatalog = new LazySkillCatalog(resolve(dirname(fileURLToPath(import.meta.url)), "../../../skills"));
   const skillCatalogReady = skillCatalog.initialize().then(() => {
     const knownSkills = new Set(skillCatalog.list().map((skill) => skill.name));
@@ -101,20 +91,20 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
   const modelRuntimeReady = modelRuntime.initialize();
   const modelSettings = new ModelSettingsService(credentials, modelRuntime, credentialsReady, modelRuntimeReady);
   registerSettingsRoutes(app, modelSettings, credentialsReady, { ready: skillCatalogReady, list: () => skillCatalog.list(), capabilities: installedCapabilityCatalog });
-  const mcpGateway = new PiMcpGatewayManager(resolve(gate4Root, "mcp", "host"));
-  const mcpSettings = new McpSettingsService(resolve(gate4Root, "mcp"), credentials, mcpGateway);
+  const mcpGateway = new PiMcpGatewayManager(resolve(workspaceRoot, "mcp", "host"));
+  const mcpSettings = new McpSettingsService(resolve(workspaceRoot, "mcp"), credentials, mcpGateway);
   const mcpReady = credentialsReady.then(() => mcpSettings.initialize());
   registerMcpSettingsRoutes(app, mcpSettings, mcpReady);
   const modelStatus = () => modelSettings.status();
   const customRouteConfig = () => modelSettings.customRouteConfig();
-  const literatureCache = new FileLiteratureCache(resolve(gate4Root, "literature-cache"));
+  const literatureCache = new FileLiteratureCache(resolve(workspaceRoot, "literature-cache"));
   const literature = new LiteratureSearchService(
     new SemanticScholarProvider(options.literatureFetch ?? fetch, () => credentials.get("semantic-scholar", "apiKey")),
     new OpenAlexProvider(options.literatureFetch ?? fetch, () => credentials.get("openalex", "apiKey")),
     literatureCache,
     { retry: { ...(options.literatureSleep ? { sleep: options.literatureSleep } : {}) } },
   );
-  const fixtureConnector = new FixtureConnectorAdapter(resolve(gate4Root, "connector-artifacts"));
+  const fixtureConnector = new FixtureConnectorAdapter(resolve(workspaceRoot, "connector-artifacts"));
   const connectorMode = options.connectorMode ?? (process.env.XILING_CONNECTOR_MODE === "live" ? "live" : "fixture");
   const connectorCredentials = (connectorId: OceanSubsetRequest["connectorId"]): Record<string, unknown> => {
     const network = Object.fromEntries(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"].flatMap((name) => process.env[name] ? [[name, process.env[name]!]] : []));
@@ -123,11 +113,11 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
     if (connectorId === "nasa-harmony") return { ...base, ...Object.fromEntries(["token", "username", "password"].flatMap((field) => { const value = credentials.get("nasa-earthdata", field); return value ? [[field, value]] : []; })) };
     return base;
   };
-  const liveConnectorProbe = new DockerConnectorProbe(resolve(gate4Root, "connector-metadata"), connectorCredentials);
-  const liveConnectorRunner = new DockerConnectorRunner(resolve(gate4Root, "connector-runs"), connectorCredentials);
+  const liveConnectorProbe = new DockerConnectorProbe(resolve(workspaceRoot, "connector-metadata"), connectorCredentials);
+  const liveConnectorRunner = new DockerConnectorRunner(resolve(workspaceRoot, "connector-runs"), connectorCredentials);
   const connectorProbe = options.connectorProbe ?? (connectorMode === "live" ? liveConnectorProbe : fixtureConnector);
   const connectorWorkflow = new ConnectorWorkflowService(
-    new JsonConnectorJobRepository(resolve(gate4Root, "connector-jobs.json")),
+    new JsonConnectorJobRepository(resolve(workspaceRoot, "connector-jobs.json")),
     options.connectorDownloader ?? (connectorMode === "live" ? liveConnectorRunner : fixtureConnector),
   );
   const connectorReady = connectorWorkflow.initialize();
@@ -135,13 +125,15 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
     const credentialId = request.connectorId === "copernicus-marine" ? "copernicus-marine" : request.connectorId === "nasa-harmony" ? "nasa-earthdata" : undefined;
     return !credentialId || credentials.status(credentialId).configured;
   };
-  const projectWorkflowRepository = new SqliteProjectWorkflowRepository(resolve(gate4Root, "project-workflows.sqlite"));
+  const projectWorkflowRepository = new SqliteProjectWorkflowRepository(resolve(workspaceRoot, "project-workflows.sqlite"));
   const projectWorkflow = new ProjectWorkflowService(
     projectWorkflowRepository,
     connectorWorkflow,
     connectorProbe,
-    options.projectAnalysisRunner ?? (connectorMode === "live" ? new DockerProjectAnalysisRunner(gate4Root) : new FixtureProjectAnalysisRunner(resolve(gate4Root, "project-runs"))),
+    options.projectAnalysisRunner ?? (connectorMode === "live" ? new DockerProjectAnalysisRunner(workspaceRoot) : new FixtureProjectAnalysisRunner(resolve(workspaceRoot, "project-runs"))),
     connectorCredentialsAvailable,
+    undefined,
+    new LocalWorkflowArtifactRegistrar(workspaceRoot, artifactStore),
   );
   const projectWorkflowReady = Promise.all([connectorReady, credentialsReady]).then(() => projectWorkflow.initialize());
   const connectorMetadata = new Map<string, { requestHash: string; metadata: ConnectorMetadataSummary }>();
@@ -187,7 +179,7 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
     const projectionRequest = { activeNodeId: request.activeNodeId, quotedNodeIds: request.quotedNodeIds, activatedCapabilityIds: resolvedCapabilities };
     let projection = projectResearchGraphContext(projectionRequest, graph, capsuleMap, projectCapabilityCatalog);
     const selectedIds = [...new Set([...projection.activeBranchNodeIds, ...projection.quotedNodeIds])];
-    const resolvedNodes = new Map<string, ContextNodeContent>(graph.nodes.map((node) => [node.id, { id: node.id, title: node.title, body: node.summary, sourceLabel: "科研图结构化摘要（非原文）", ...(node.sourceLocator || node.uri ? { sourceLocator: node.sourceLocator ?? node.uri } : {}) }]));
+    const resolvedNodes = new Map<string, ContextNodeContent>(graph.nodes.map((node) => [node.id, { id: node.id, title: node.title, body: node.summary, sourceLabel: "科研图结构化摘要（非原文）", sourceKind: "structured-summary", ...(node.sourceLocator || node.uri ? { sourceLocator: node.sourceLocator ?? node.uri } : {}) }]));
     for (const nodeId of selectedIds) {
       const node = graph.nodes.find((candidate) => candidate.id === nodeId);
       if (!node) continue;
@@ -208,7 +200,7 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
       const command = z.object({
         projectId: z.string().min(1).max(120),
         context: z.object({ activeNodeId: z.string().min(1).max(120), quotedNodeIds: z.array(z.string().min(1).max(120)).max(12) }).optional(),
-        multiAgent: z.object({ delegationId: z.string().min(1).max(160), rootRunId: z.string().min(1).max(160), parentRunId: z.string().min(1).max(160), roleId: z.string().min(1).max(80), isolation: z.enum(["scoped", "blind", "execution"]), contextManifest: z.unknown(), budget: z.object({ maxDurationMs: z.number().positive(), maxToolCalls: z.number().int().positive(), maxCost: z.number().positive().optional() }) }).optional(),
+        multiAgent: z.object({ delegationId: z.string().min(1).max(160), rootRunId: z.string().min(1).max(160), parentRunId: z.string().min(1).max(160), roleId: z.string().min(1).max(80), isolation: z.enum(["scoped", "blind", "execution"]), contextManifest: z.object({ projectId: z.string().min(1).max(120), projectBriefRevision: z.string().min(1).max(240), researchEntityIds: z.array(z.string().min(1).max(240)).max(64), sourceUris: z.array(z.string().min(1).max(2_000)).max(64), projectionHash: z.string().min(1).max(240) }), budget: z.object({ maxDurationMs: z.number().positive(), maxToolCalls: z.number().int().positive(), maxCost: z.number().positive().optional() }) }).optional(),
       }).parse(commandContext);
       const activeProject = knowledge.getProject(command.projectId);
       if (!activeProject || activeProject.status === "archived") throw new Error("Project not found or archived");
@@ -219,12 +211,15 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
       const allowedRoleIds = new Set(activeDomain.agentRoles.map((role) => role.id));
       const childRole = command.multiAgent && allowedRoleIds.has(command.multiAgent.roleId) ? agentRoles.get(command.multiAgent.roleId) : undefined;
       if (command.multiAgent && !childRole) throw new Error("Unknown delegated Agent role");
+      if (command.multiAgent && command.multiAgent.contextManifest.projectId !== activeProject.id) throw new Error("Delegated ContextManifest project mismatch");
+      const childAccess = command.multiAgent ? createChildAccessPolicy(command.multiAgent.contextManifest, command.multiAgent.isolation) : undefined;
       const activeCapabilities = childRole
-        ? activeCapabilityCatalog.filter((capability) => childRole.allowedCapabilities.includes(capability.id))
+        ? activeCapabilityCatalog.filter((capability) => childRole.allowedCapabilities.includes(capability.id) && !(command.multiAgent?.isolation !== "scoped" && ["project.read", "wiki.read"].includes(capability.id)))
         : selectResearchCapabilities(prompt, activeCapabilityCatalog);
+      const scopedArtifactReader = (uri: string, offset: number, max: number) => { childAccess?.assertSource(uri); return readManagedArtifact(activeProject.id, uri, offset, max); };
       let activeTools = childRole
-        ? createResearchTools(activeCapabilities, { project: activeProject, knowledge, literature, readArtifact: readManagedArtifact })
-        : selectResearchTools(prompt, { project: activeProject, knowledge, literature, readArtifact: readManagedArtifact }, activeCapabilityCatalog);
+        ? createResearchTools(activeCapabilities, { project: activeProject, knowledge, literature, readArtifact: scopedArtifactReader })
+        : selectResearchTools(prompt, { project: activeProject, knowledge, literature, readArtifact: (uri, offset, max) => readManagedArtifact(activeProject.id, uri, offset, max) }, activeCapabilityCatalog);
       await skillCatalogReady;
       const activatedSkills = await skillCatalog.activate(prompt, activeCapabilities.map((capability) => capability.id));
       await mcpReady;
@@ -234,7 +229,15 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
       const requestedContext = command.context ?? (persistedContext ? { activeNodeId: persistedContext.activeNodeId, quotedNodeIds: persistedContext.quotedNodeIds } : defaultContext);
       let resolvedContext = requestedContext;
       let researchProjection: Awaited<ReturnType<typeof projectResearchContext>>;
-      try { researchProjection = await projectResearchContext(activeProject.id, { ...requestedContext, activatedCapabilityIds: activeCapabilities.map((capability) => capability.id) }); }
+      if (command.multiAgent?.isolation === "blind" || command.multiAgent?.isolation === "execution") {
+        const sourceUris = command.multiAgent.contextManifest.sourceUris.filter((uri): uri is ResourceUri => /^(artifact|dataset|project):\/\//.test(uri));
+        researchProjection = {
+          graph: await (async () => { await researchGraphReady; return researchGraph.getProjection(activeProject.id, "all"); })(),
+          projection: { activeBranchNodeIds: [], quotedNodeIds: [], capsules: [], artifactUris: sourceUris, activatedCapabilities: activeCapabilities.map((capability) => capability.id), explanation: [`${command.multiAgent.isolation} 子智能体仅接收 ContextManifest 声明来源`], projectionHash: command.multiAgent.contextManifest.projectionHash, economy: { uniqueArtifactCount: new Set(sourceUris).size, reusedArtifactReferences: 0, selectedNodeCount: 0 } },
+          resolvedNodes: new Map(),
+        };
+        resolvedContext = { activeNodeId: "isolated-task-packet", quotedNodeIds: [] };
+      } else try { researchProjection = await projectResearchContext(activeProject.id, { ...requestedContext, activatedCapabilityIds: activeCapabilities.map((capability) => capability.id) }); }
       catch {
         resolvedContext = defaultContext;
         researchProjection = await projectResearchContext(activeProject.id, { ...resolvedContext, activatedCapabilityIds: activeCapabilities.map((capability) => capability.id) });
@@ -265,7 +268,9 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
         "引用工具结果时说明数据源；缺少证据时明确说明。",
         ...(childRole ? [childRole.systemPrompt, "你是隔离的子智能体，不能创建其他子智能体。只返回当前 TaskPacket 的结果，不延伸为项目最终结论。"] : ["当任务存在可独立验收的并行前沿、竞争假说或盲审价值时，可使用 delegate_research_tasks；简单任务和需要单一连续推理的任务不要委派。"]),
       ].join("\n");
-      const projectPrompt = `当前项目：${activeProject.name}\n研究问题：${activeProject.researchQuestion}\n当前科研图活动实体：${resolvedContext.activeNodeId}\n当前科研图显式引用：${resolvedContext.quotedNodeIds.join(", ") || "无"}`;
+      const projectPrompt = command.multiAgent?.isolation === "blind" || command.multiAgent?.isolation === "execution"
+        ? `隔离 TaskPacket：不得获知项目标题、研究问题、父会话、兄弟输出或未声明实体。声明来源：${command.multiAgent.contextManifest.sourceUris.join(", ") || "无"}`
+        : `当前项目：${activeProject.name}\n研究问题：${activeProject.researchQuestion}\n当前科研图活动实体：${resolvedContext.activeNodeId}\n当前科研图显式引用：${resolvedContext.quotedNodeIds.join(", ") || "无"}`;
       const historyRecords = history;
       const allowedSourceEntries = new Set<string>();
       const latestCompaction = agentSessionStore.latestCompaction(sessionId);
@@ -323,6 +328,14 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
           }),
         })];
       }
+      if (command.multiAgent) {
+        let toolCalls = 0;
+        activeTools = activeTools.map((tool) => ({ ...tool, execute: async (...args: Parameters<typeof tool.execute>) => {
+          toolCalls += 1;
+          if (toolCalls > command.multiAgent!.budget.maxToolCalls) throw new Error("Child Agent tool-call budget exceeded");
+          return tool.execute(...args);
+        } }));
+      }
       const modelContextWindow = liveRoute?.contextWindow ?? 128_000;
       const maxOutputTokens = liveRoute?.maxOutputTokens ?? 8_192;
       const projectionHash = researchProjection.projection.projectionHash;
@@ -356,7 +369,7 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
         onUsage: async (usage) => {
           const normalized = { providerId: routeStatus.providerId ?? "xiling-offline", modelId: routeStatus.modelId ?? "fixture", inputTokens: usage.input, outputTokens: usage.output, cacheReadTokens: usage.cacheRead, cacheWriteTokens: usage.cacheWrite, reasoningTokens: usage.reasoning ?? 0, totalTokens: usage.totalTokens, cost: usage.cost.total } satisfies RuntimeUsageInput;
           await onUsage(normalized);
-          await tokenLedger.record({ sessionId, providerId: normalized.providerId, modelId: normalized.modelId, inputTokens: normalized.inputTokens, outputTokens: normalized.outputTokens, cacheReadTokens: normalized.cacheReadTokens, cacheWriteTokens: normalized.cacheWriteTokens, reasoningTokens: normalized.reasoningTokens, totalTokens: normalized.totalTokens, cost: normalized.cost, projectionHash, contextEstimatedTokens: contextAssembly.trace.estimatedInputTokens, contextAvailableTokens: contextAssembly.trace.availableInputTokens, contextCacheHit: contextAssembly.trace.cache === "hit", activatedCapabilityCount: contextAssembly.trace.activatedCapabilityIds.length, activatedSkillCount: contextAssembly.trace.activatedSkillNames.length, omittedHistoryCount: contextAssembly.trace.omittedHistoryCount });
+          await tokenLedger.record({ sessionId, providerId: normalized.providerId, modelId: normalized.modelId, inputTokens: normalized.inputTokens, outputTokens: normalized.outputTokens, cacheReadTokens: normalized.cacheReadTokens, cacheWriteTokens: normalized.cacheWriteTokens, reasoningTokens: normalized.reasoningTokens, totalTokens: normalized.totalTokens, cost: normalized.cost, projectionHash, contextEstimatedTokens: contextAssembly.trace.estimatedInputTokens, contextAvailableTokens: contextAssembly.trace.availableInputTokens, contextCacheHit: contextAssembly.trace.cache === "hit", activatedCapabilityCount: contextAssembly.trace.activatedCapabilityIds.length, activatedSkillCount: contextAssembly.trace.activatedSkillNames.length, omittedHistoryCount: contextAssembly.trace.omittedHistoryCount, contextSourceCoverage: contextAssembly.trace.sourceCoverage.ratio, contextDuplicateHistoryCount: contextAssembly.trace.deduplicatedHistoryCount });
         },
       });
       runtime.setActiveTools(activeTools);
@@ -463,6 +476,8 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
       const text = [...snapshot.entries].reverse().find((entry) => entry.kind === "assistant")?.text ?? "";
       if (snapshot.run.status === "failed") throw new Error(snapshot.run.error ?? "Delegated Agent failed");
       const parsed = extractTaskResultText(text);
+      const access = createChildAccessPolicy(input.contextManifest, input.isolation);
+      for (const uri of [...parsed.sourceUris, ...parsed.artifactUris]) if (/^(artifact|dataset|project):\/\//.test(uri)) access.assertSource(uri);
       return {
         status: snapshot.run.status === "cancelled" ? "cancelled" : "completed",
         ...parsed,
@@ -471,22 +486,9 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
       };
     },
   }, agentRoles, { maxConcurrency: 3, maxTasksPerDelegation: 6, defaultBudget: { maxDurationMs: 180_000, maxToolCalls: 12, maxCost: 2 } });
-  const migrationReady = (async () => {
-    let importedMessages = 0;
-    for (const project of knowledge.listProjects()) {
-      for (const session of knowledge.listChatSessions(project.id)) {
-        const messages = knowledge.listChatMessages(session.id);
-        const mapping = agentSessionStore.importLegacyTranscript({ sessionId: session.id, projectId: project.id, messages });
-        importedMessages += mapping.size;
-      }
-    }
-    const report = { version: 3, status: "completed", importedMessages, retiredCanvasDetached: true, completedAt: new Date().toISOString(), destructiveRewrite: false, ...(migrationBackup ? { backup: migrationBackup } : {}) };
-    await writeFile(migrationReportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-    return report;
-  })();
-  const workflowProjectionReady = migrationReady.then(() => reconcileAgentWorkflowDrafts({ store: agentSessionStore, ready: projectWorkflowReady, workflows: projectWorkflow }));
+  const workflowProjectionReady = reconcileAgentWorkflowDrafts({ store: agentSessionStore, ready: projectWorkflowReady, workflows: projectWorkflow });
   const researchGraphReconciler = new ResearchGraphReconciler(researchGraph, knowledge, projectWorkflowRepository, agentSessionStore);
-  const researchGraphReady = Promise.all([migrationReady, workflowProjectionReady, projectWorkflowReady]).then(() => researchGraphReconciler.reconcile());
+  const researchGraphReady = Promise.all([workflowProjectionReady, projectWorkflowReady]).then(() => researchGraphReconciler.reconcile());
   app.addHook("onClose", async () => { await agentHarness.shutdown(); try { await mcpReady; } catch { /* initialization error is surfaced by settings and Agent routes */ } await mcpGateway.close(); try { await workflowProjectionReady; } finally { agentSessionStore.close(); } });
   app.addHook("onClose", async () => {
     try {
@@ -499,8 +501,8 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
       researchGraphProposals.close();
     }
   });
-  registerWorkspaceRoutes(app, { knowledge, agentSessions: agentSessionStore, agentMigrationReady: migrationReady, onChatSessionCreated: (session) => agentHarness.createSession({ id: session.id, projectId: session.projectId }), onChatSessionArchived: (session) => agentHarness.archiveSession(session.id), validateDomainIds: (ids) => scienceDomains.validate(ids), validateResearchContext: async (projectId, context) => projectResearchContext(projectId, context) });
-  registerAgentCenterRoutes(app, { harness: agentHarness, store: agentSessionStore, ready: Promise.all([migrationReady, workflowProjectionReady]), projectExists: (projectId) => Boolean(knowledge.getProject(projectId)), projectActive: (projectId) => { const project = knowledge.getProject(projectId); return Boolean(project && project.status !== "archived"); }, sessionExists: (sessionId, projectId) => knowledge.getChatSession(sessionId)?.projectId === projectId, sessionTitle: (sessionId) => knowledge.getChatSession(sessionId)?.title, listAgentRoles: () => agentRoles.list().map(({ systemPrompt: _systemPrompt, canDelegate: _canDelegate, ...role }) => role), acceptedInputModalities: async () => {
+  registerWorkspaceRoutes(app, { knowledge, agentSessions: agentSessionStore, onChatSessionCreated: (session) => agentHarness.createSession({ id: session.id, projectId: session.projectId }), onChatSessionArchived: (session) => agentHarness.archiveSession(session.id), validateDomainIds: (ids) => scienceDomains.validate(ids), validateResearchContext: async (projectId, context) => projectResearchContext(projectId, context) });
+  registerAgentCenterRoutes(app, { harness: agentHarness, store: agentSessionStore, ready: workflowProjectionReady, projectExists: (projectId) => Boolean(knowledge.getProject(projectId)), projectActive: (projectId) => { const project = knowledge.getProject(projectId); return Boolean(project && project.status !== "archived"); }, sessionExists: (sessionId, projectId) => knowledge.getChatSession(sessionId)?.projectId === projectId, sessionTitle: (sessionId) => knowledge.getChatSession(sessionId)?.title, listAgentRoles: () => agentRoles.list().map(({ systemPrompt: _systemPrompt, canDelegate: _canDelegate, ...role }) => role), acceptedInputModalities: async () => {
     const status = await modelStatus();
     if (!status.ready || !status.selectedModel) return ["text"];
     return status.selectedModel.inputModalities.filter((modality) => modality === "text" || modality === "image");
@@ -514,9 +516,10 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
     return settled;
   };
 
-  registerConnectorRoutes(app, { root: gate4Root, mode: connectorMode, credentials, credentialsReady, probe: connectorProbe, workflow: connectorWorkflow, workflowReady: connectorReady, metadata: connectorMetadata, activeRuns: activeConnectorRuns });
-  registerWorkflowRoutes(app, { root: gate4Root, workflow: projectWorkflow, ready: projectWorkflowReady, projects: knowledge, conversations: knowledge, settle: settleProjectWorkflow });
+  registerConnectorRoutes(app, { root: workspaceRoot, mode: connectorMode, credentials, credentialsReady, probe: connectorProbe, workflow: connectorWorkflow, workflowReady: connectorReady, metadata: connectorMetadata, activeRuns: activeConnectorRuns });
+  registerWorkflowRoutes(app, { workflow: projectWorkflow, ready: projectWorkflowReady, projects: knowledge, conversations: knowledge, settle: settleProjectWorkflow });
   registerResearchGraphRoutes(app, { graph: researchGraph, layout: scientificCanvasLayout, proposals: researchGraphProposals, ready: researchGraphReady, reconcile: () => researchGraphReconciler.reconcile(), projectExists: (projectId) => Boolean(knowledge.getProject(projectId)) });
+  registerAttentionRoutes(app, { projectExists: (projectId) => Boolean(knowledge.getProject(projectId)), listWorkflows: (projectId) => projectWorkflow.list({ projectId }), listEvidence: (projectId) => knowledge.listEvidence(projectId), listProposals: (projectId) => researchGraphProposals.list(projectId), listAgentIssues: (projectId) => agentSessionStore.listProjectSessions(projectId).flatMap((session) => agentSessionStore.listSessionRuns(session.id)).filter((run) => run.status === "failed" || run.status === "suspended").map((run) => ({ id: run.id, status: run.status, ...(run.error ? { error: run.error } : {}), createdAt: run.startedAt })) });
   app.get("/api/projects/:projectId/overview", async (request, reply) => {
     const parsed = z.object({ projectId: z.string().min(1).max(120) }).safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid project overview request" });

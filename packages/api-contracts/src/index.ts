@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { OceanSubsetRequest, PaperRecord, ResourceUri } from "@xiling/contracts";
+import type { PaperRecord, ResourceUri } from "@xiling/contracts";
+import type { OceanSubsetRequest } from "@xiling/domain-ocean";
 
 export const projectIdSchema = z.string().min(1).max(120);
 export const sessionIdSchema = z.string().min(1).max(160);

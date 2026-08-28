@@ -58,21 +58,18 @@ describe("knowledge service smoke", () => {
     reopened.close();
   });
 
-  it("persists project-scoped chat sessions and messages", async () => {
+  it("persists project-scoped chat session directories and Research Graph selections", async () => {
     const root = await mkdtemp(join(tmpdir(), "xiling-chat-history-"));
     const path = join(root, "knowledge.sqlite");
     const first = new KnowledgeService(path);
     const project = first.createProject({ name: "海气耦合", description: "fixture", researchQuestion: "风应力如何响应？", domainIds: ["ocean-climate"] });
     const session = first.createChatSession(project.id, "检查风应力资料");
-    first.appendChatMessage(session.id, { role: "user", text: "列出资料", status: "complete" });
-    first.appendChatMessage(session.id, { role: "assistant", text: "已找到三类资料", status: "complete" });
     first.setChatSessionContext(session.id, { projectId: project.id, activeNodeId: "response-1", quotedNodeIds: ["paper-1", "paper-1"] });
-    expect(first.listChatSessions(project.id)).toMatchObject([{ id: session.id, messageCount: 2, preview: "已找到三类资料", canvasContext: { activeNodeId: "response-1", quotedNodeIds: ["paper-1"] } }]);
+    expect(first.listChatSessions(project.id)).toMatchObject([{ id: session.id, messageCount: 0, preview: "", canvasContext: { activeNodeId: "response-1", quotedNodeIds: ["paper-1"] } }]);
     expect(first.listChatSessions("ocean-heatwave")).toHaveLength(0);
     first.close();
 
     const restored = new KnowledgeService(path);
-    expect(restored.listChatMessages(session.id).map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(restored.getChatSessionContext(session.id)).toMatchObject({ projectId: project.id, activeNodeId: "response-1", quotedNodeIds: ["paper-1"] });
     restored.close();
   });

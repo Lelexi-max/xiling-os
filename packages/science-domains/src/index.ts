@@ -42,7 +42,7 @@ export interface ResolvedScienceDomain {
   schemaNamespaces: string[];
 }
 
-const commonRoleContract = "只完成声明的子任务；区分事实、推断和未知；提供稳定来源 URI；不得修改 Research Graph、Wiki 或项目状态；结果简洁并明确局限。";
+export const DOMAIN_AGENT_HANDOFF_CONTRACT = "只完成声明的子任务；区分事实、推断和未知；不得修改 Research Graph、Wiki 或项目状态。最终响应必须是只含 summary、sourceUris、artifactUris、limitations 的 JSON 对象。";
 
 export const GENERAL_SCIENCE_DOMAIN: ScienceDomainManifest = {
   id: "general-science",
@@ -53,34 +53,17 @@ export const GENERAL_SCIENCE_DOMAIN: ScienceDomainManifest = {
   promptFragments: ["你服务于一个科学研究项目。遵守可证伪性、来源可追踪、方法透明、计算可复现和不确定性披露原则；不得把模型生成内容冒充实验证据。"],
   capabilities: [],
   agentRoles: [
-    { id: "literature-scout", title: "文献检索员", description: "设计检索式、覆盖不同数据库并返回去重候选文献。", systemPrompt: `你是汐灵 OS 的跨学科文献检索子智能体。保留 DOI、URL 和数据来源，不把候选论文冒充已核验证据。${commonRoleContract}`, allowedCapabilities: ["project.read", "literature.search"], defaultIsolation: "scoped", canDelegate: false },
-    { id: "evidence-curator", title: "证据审查员", description: "核对来源片段并提出支持、反驳、限定或证据不足判断。", systemPrompt: `你是汐灵 OS 的跨学科证据审查子智能体。每项判断必须回链来源片段，明确适用范围、置信度和证据缺口。${commonRoleContract}`, allowedCapabilities: ["project.read", "literature.search", "artifact.read"], defaultIsolation: "blind", canDelegate: false },
-    { id: "reproducibility-auditor", title: "复现审计员", description: "审计输入、代码、环境、哈希与重跑条件。", systemPrompt: `你是汐灵 OS 的跨学科复现审计子智能体。核对输入快照、环境、代码、参数、随机性、Artifact 哈希与缺失溯源。${commonRoleContract}`, allowedCapabilities: ["project.read", "artifact.read"], defaultIsolation: "blind", canDelegate: false },
-    { id: "skeptical-reviewer", title: "反方审稿员", description: "盲审结论、方法、统计假设和过度推断。", systemPrompt: `你是汐灵 OS 的跨学科反方审稿子智能体。主动寻找替代解释、选择偏差、统计误用、证据断裂和不可复现环节。${commonRoleContract}`, allowedCapabilities: ["project.read", "artifact.read", "literature.search"], defaultIsolation: "blind", canDelegate: false },
+    { id: "literature-scout", title: "文献检索员", description: "设计检索式、覆盖不同数据库并返回去重候选文献。", systemPrompt: `你是汐灵 OS 的跨学科文献检索子智能体。保留 DOI、URL 和数据来源，不把候选论文冒充已核验证据。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["project.read", "literature.search"], defaultIsolation: "scoped", canDelegate: false },
+    { id: "evidence-curator", title: "证据审查员", description: "核对来源片段并提出支持、反驳、限定或证据不足判断。", systemPrompt: `你是汐灵 OS 的跨学科证据审查子智能体。每项判断必须回链来源片段，明确适用范围、置信度和证据缺口。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["project.read", "literature.search", "artifact.read"], defaultIsolation: "blind", canDelegate: false },
+    { id: "reproducibility-auditor", title: "复现审计员", description: "审计输入、代码、环境、哈希与重跑条件。", systemPrompt: `你是汐灵 OS 的跨学科复现审计子智能体。核对输入快照、环境、代码、参数、随机性、Artifact 哈希与缺失溯源。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["project.read", "artifact.read"], defaultIsolation: "blind", canDelegate: false },
+    { id: "skeptical-reviewer", title: "反方审稿员", description: "盲审结论、方法、统计假设和过度推断。", systemPrompt: `你是汐灵 OS 的跨学科反方审稿子智能体。主动寻找替代解释、选择偏差、统计误用、证据断裂和不可复现环节。${DOMAIN_AGENT_HANDOFF_CONTRACT}`, allowedCapabilities: ["project.read", "artifact.read", "literature.search"], defaultIsolation: "blind", canDelegate: false },
   ],
   connectorKinds: ["literature"],
   artifactKinds: ["document", "table", "figure", "code", "dataset", "provenance", "review"],
   schemaNamespaces: ["core", "evidence", "provenance"],
 };
 
-export const OCEAN_CLIMATE_DOMAIN: ScienceDomainManifest = {
-  id: "ocean-climate",
-  version: "1.0.0",
-  title: "海洋与气候科学",
-  description: "物理海洋、海洋观测、气候数据切片与可复现计算。",
-  disciplines: ["physical-oceanography", "climate-science"],
-  promptFragments: ["本项目启用了海洋与气候领域包。检查坐标、单位、掩膜、深度正方向、日历、时间基准、采样偏差和空间统计假设。"],
-  capabilities: [{ id: "ocean.subset.plan", toolName: "plan_ocean_data_subset", description: "规划海洋数据切片并生成只读预检", keywords: ["数据", "argo", "erddap", "copernicus", "nasa", "netcdf", "切片", "下载", "变量", "经纬度", "深度"], skillNames: ["ocean-data-subsetting"] }],
-  agentRoles: [
-    { id: "data-steward", title: "海洋数据规划员", description: "核对变量、范围、许可和切片计划，不执行下载。", systemPrompt: `你是汐灵 OS 的海洋数据规划子智能体。输出变量、区域、深度、时间、体积风险和可复现数据快照计划，任何下载都停在审批前。${commonRoleContract}`, allowedCapabilities: ["project.read", "ocean.subset.plan"], defaultIsolation: "scoped", canDelegate: false },
-    { id: "ocean-analyst", title: "物理海洋分析员", description: "规划或执行获批的物理海洋与气候计算。", systemPrompt: `你是汐灵 OS 的物理海洋分析子智能体。检查坐标、单位、掩膜、时间基准和统计假设；结果必须关联输入快照与 Artifact。${commonRoleContract}`, allowedCapabilities: ["project.read", "artifact.read", "ocean.subset.plan"], defaultIsolation: "execution", canDelegate: false },
-  ],
-  connectorKinds: ["erddap", "opendap", "argo-gdac", "copernicus-marine", "nasa-harmony"],
-  artifactKinds: ["netcdf", "grib", "zarr", "geospatial-raster", "map"],
-  schemaNamespaces: ["ocean", "climate", "geospatial"],
-};
-
-export const BUILTIN_SCIENCE_DOMAINS = [GENERAL_SCIENCE_DOMAIN, OCEAN_CLIMATE_DOMAIN] as const;
+export const BUILTIN_SCIENCE_DOMAINS = [GENERAL_SCIENCE_DOMAIN] as const;
 
 export class ScienceDomainRegistry {
   private readonly manifests = new Map<string, ScienceDomainManifest>();

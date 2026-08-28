@@ -134,12 +134,20 @@ describe("projectContext", () => {
     expect(result.canvasText).toContain("显式引用 · 科研实体内容");
     expect(result.history).toHaveLength(0);
     expect(result.trace.omittedHistoryCount).toBe(1);
+    expect(result.trace.tokenComposition).toMatchObject({ fixed: 500, toolSchemas: 200, skills: 100, research: expect.any(Number), history: 0 });
+    expect(result.trace.sourceCoverage).toMatchObject({ exactBlockCount: 3, ratio: 1 });
   });
 
   it("fails explicitly when selected evidence cannot fit the model window", () => {
     const capsule = createNodeContextCapsule({ projectId: "p1", nodeId: "root", title: "root", body: "证据".repeat(4_000), artifactUris: [] });
     const projection = projectContext({ activeNodeId: "root", quotedNodeIds: [] }, { nodes: new Map([["root", node("root")]]), capsules: new Map([["root", capsule]]) });
     expect(() => assembleContext({ projection, nodes: new Map([["root", { id: "root", title: "root", body: "证据".repeat(4_000) }]]), history: [], modelContextWindow: 4_096, maxOutputTokens: 1_024, fixedPromptTokens: 500, toolSchemaTokens: 200, skillTokens: 0, activatedSkillNames: [] })).toThrow(ContextCapacityError);
+  });
+
+  it("makes missing source locators visible for exact evidence blocks", () => {
+    const projection = projectContext({ activeNodeId: "root", quotedNodeIds: [] }, { nodes: new Map([["root", node("root")]]), capsules: new Map() });
+    const result = assembleContext({ projection, nodes: new Map([["root", { id: "root", title: "摘录", body: "精确证据", sourceKind: "primary-excerpt" as const }]]), history: [], modelContextWindow: 8_000, maxOutputTokens: 1_000, fixedPromptTokens: 100, toolSchemaTokens: 0, skillTokens: 0, activatedSkillNames: [] });
+    expect(result.trace.sourceCoverage).toEqual({ exactBlockCount: 1, locatorRequiredCount: 1, locatedCount: 0, ratio: 0 });
   });
 
   it("fails when fixed prompts and the current question alone exceed capacity", () => {
@@ -165,14 +173,14 @@ describe("projectContext", () => {
   it("reuses deterministic assembly results through the host cache", () => {
     const cache = new ContextAssemblyCache(2);
     const key = cache.key({ projection: "a", history: [] });
-    const value = { canvasText: "fixture", history: [], trace: { projectionHash: "a", includedNodeIds: [], exactNodeIds: [], capsuleNodeIds: [], omittedHistoryCount: 0, activatedCapabilityIds: [], activatedSkillNames: [], estimatedInputTokens: 1, availableInputTokens: 10, cache: "miss" as const, degradations: [] } };
+    const value = { canvasText: "fixture", history: [], trace: { projectionHash: "a", includedNodeIds: [], exactNodeIds: [], capsuleNodeIds: [], omittedHistoryCount: 0, activatedCapabilityIds: [], activatedSkillNames: [], estimatedInputTokens: 1, availableInputTokens: 10, cache: "miss" as const, degradations: [], tokenComposition: { fixed: 0, toolSchemas: 0, skills: 0, research: 1, history: 0 }, sourceCoverage: { exactBlockCount: 0, locatorRequiredCount: 0, locatedCount: 0, ratio: 1 }, deduplicatedHistoryCount: 0 } };
     cache.set(key, value);
     expect(cache.get(key)).toEqual(value);
   });
 
   it("bounds cache memory by estimated tokens as well as entry count", () => {
     const cache = new ContextAssemblyCache(10, 3);
-    const value = (projectionHash: string, estimatedInputTokens: number) => ({ canvasText: projectionHash, history: [], trace: { projectionHash, includedNodeIds: [], exactNodeIds: [], capsuleNodeIds: [], omittedHistoryCount: 0, activatedCapabilityIds: [], activatedSkillNames: [], estimatedInputTokens, availableInputTokens: 10, cache: "miss" as const, degradations: [] } });
+    const value = (projectionHash: string, estimatedInputTokens: number) => ({ canvasText: projectionHash, history: [], trace: { projectionHash, includedNodeIds: [], exactNodeIds: [], capsuleNodeIds: [], omittedHistoryCount: 0, activatedCapabilityIds: [], activatedSkillNames: [], estimatedInputTokens, availableInputTokens: 10, cache: "miss" as const, degradations: [], tokenComposition: { fixed: 0, toolSchemas: 0, skills: 0, research: estimatedInputTokens, history: 0 }, sourceCoverage: { exactBlockCount: 0, locatorRequiredCount: 0, locatedCount: 0, ratio: 1 }, deduplicatedHistoryCount: 0 } });
     cache.set("a", value("a", 2));
     cache.set("b", value("b", 2));
     expect(cache.get("a")).toBeUndefined();

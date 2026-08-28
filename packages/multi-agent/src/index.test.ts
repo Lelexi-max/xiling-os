@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentRoleRegistry, MultiAgentOrchestrator, evaluateDelegationNeed, extractTaskResultText, type DelegationStore, type StoredDelegation } from "./index.js";
+import { AgentRoleRegistry, MultiAgentOrchestrator, createChildAccessPolicy, evaluateDelegationNeed, extractTaskResultText, type DelegationStore, type StoredDelegation } from "./index.js";
 
 class MemoryStore implements DelegationStore {
   records = new Map<string, StoredDelegation>();
@@ -26,7 +26,7 @@ describe("multi-agent research orchestration", () => {
         active += 1; peak = Math.max(peak, active);
         await new Promise((resolve) => setTimeout(resolve, 4));
         active -= 1;
-        return { status: "completed", ...extractTaskResultText(`完成 ${input.objective}\n来源：https://example.test/${input.role.id}\n局限：离线 fixture`) };
+        return { status: "completed", ...extractTaskResultText(JSON.stringify({ summary: `完成 ${input.objective}`, sourceUris: [`https://example.test/${input.role.id}`], artifactUris: [], limitations: ["离线 fixture"] })) };
       },
     }, new AgentRoleRegistry(), { maxConcurrency: 2 });
     const results = await orchestrator.delegate({
@@ -61,7 +61,7 @@ describe("multi-agent research orchestration", () => {
       async execute(input) {
         executions += 1;
         input.onRunStarted("child-run");
-        return { status: "completed", ...extractTaskResultText("已核验 artifact://result") };
+        return { status: "completed", ...extractTaskResultText(JSON.stringify({ summary: "已核验", sourceUris: ["artifact://result"], artifactUris: ["artifact://result"], limitations: [] })) };
       },
     });
     const request = {
@@ -96,5 +96,22 @@ describe("multi-agent research orchestration", () => {
     });
     expect(result?.status).toBe("cancelled");
     expect([...store.records.values()][0]?.status).toBe("cancelled");
+  });
+
+  it("enforces blind source allowlists and rejects prose handoffs", () => {
+    const manifest = { projectId: "p", projectBriefRevision: "v1", researchEntityIds: ["claim:secret"], sourceUris: ["artifact://allowed"], projectionHash: "hash" };
+    const policy = createChildAccessPolicy(manifest, "blind");
+    expect(policy.canReadEntity("claim:secret")).toBe(false);
+    expect(policy.canReadSource("artifact://allowed")).toBe(true);
+    expect(() => policy.assertSource("artifact://guessed")).toThrow("denied");
+    expect(() => extractTaskResultText("结论：看起来可复现")).toThrow("valid JSON");
+    expect(() => extractTaskResultText(JSON.stringify({ summary: "x", sourceUris: [], artifactUris: [], limitations: [], hidden: "leak" }))).toThrow("schema");
+  });
+
+  it("propagates the duration budget as a cancellation token", async () => {
+    const store = new MemoryStore();
+    const orchestrator = new MultiAgentOrchestrator(store, { createChildSession: () => "child-timeout", execute: async (input) => { input.onRunStarted("run-timeout"); return new Promise((_resolve, reject) => input.signal?.addEventListener("abort", () => reject(new Error("timeout")), { once: true })); } });
+    const [result] = await orchestrator.delegate({ projectId: "p", parentRunId: "parent", mode: "single", budget: { maxDurationMs: 5 }, contextManifest: { projectId: "p", projectBriefRevision: "v1", researchEntityIds: [], sourceUris: [], projectionHash: "hash" }, tasks: [{ roleId: "literature-scout", objective: "执行超时测试" }] });
+    expect(result?.status).toBe("cancelled");
   });
 });

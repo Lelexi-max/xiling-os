@@ -5,10 +5,20 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ConnectorMetadataProbe, ConnectorWorkflowService } from "@xiling/connectors";
 import { preflightConnector } from "@xiling/connectors";
-import type { OceanSubsetRequest, ProjectResearchWorkflow, ResourceUri, ReviewerReport } from "@xiling/contracts";
+import type { ResourceUri, ReviewerReport } from "@xiling/contracts";
+import type { OceanSubsetRequest, ProjectResearchWorkflow } from "@xiling/domain-ocean";
 
 export interface ProjectAnalysisRunner {
   execute(workflow: ProjectResearchWorkflow, signal?: AbortSignal): Promise<{ artifactUris: ResourceUri[]; checks: ReviewerReport["checks"]; limitations: string[] }>;
+}
+
+export interface WorkflowArtifactRegistration {
+  datasetArtifact?: ProjectResearchWorkflow["datasetArtifact"];
+  artifactUris: ResourceUri[];
+}
+
+export interface WorkflowArtifactRegistrar {
+  register(workflow: ProjectResearchWorkflow, artifactUris: ResourceUri[]): Promise<WorkflowArtifactRegistration>;
 }
 
 export interface ProjectWorkflowRepository {
@@ -159,6 +169,7 @@ export class ProjectWorkflowService {
     private readonly analysisRunner: ProjectAnalysisRunner,
     private readonly credentialsAvailable: (request: OceanSubsetRequest) => boolean,
     private readonly now = () => new Date().toISOString(),
+    private readonly artifactRegistrar?: WorkflowArtifactRegistrar,
   ) {}
 
   async initialize() {
@@ -238,8 +249,10 @@ export class ProjectWorkflowService {
       if (!downloaded.artifact) throw new Error("connector returned no dataset artifact");
       workflow.datasetArtifact = downloaded.artifact; workflow.status = "analyzing"; workflow.updatedAt = this.now(); await this.persist();
       const result = await this.analysisRunner.execute(structuredClone(workflow), controller.signal);
+      const registered = this.artifactRegistrar ? await this.artifactRegistrar.register(structuredClone(workflow), result.artifactUris) : undefined;
+      if (registered?.datasetArtifact) workflow.datasetArtifact = registered.datasetArtifact;
       const runId = workflow.run.id; const verdict = result.checks.every((check) => check.passed) ? "accepted" : "rejected";
-      workflow.run = { ...workflow.run, status: "succeeded", artifactUris: result.artifactUris, finishedAt: this.now() };
+      workflow.run = { ...workflow.run, status: "succeeded", artifactUris: registered?.artifactUris ?? result.artifactUris, finishedAt: this.now() };
       workflow.review = { id: `review-${randomUUID()}`, runId, verdict, checks: result.checks, limitations: result.limitations, createdAt: this.now() };
       workflow.status = "completed"; workflow.updatedAt = this.now(); await this.persist(); return structuredClone(workflow);
     } catch (error) { if (workflow.run) workflow.run = { ...workflow.run, status: controller.signal.aborted ? "cancelled" : "failed", finishedAt: this.now() }; await this.fail(workflow, controller.signal, error); throw error; }

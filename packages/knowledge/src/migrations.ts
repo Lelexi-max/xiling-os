@@ -77,6 +77,12 @@ const migrations: Array<{ version: number; sql: string }> = [{
     UPDATE projects SET domain_ids = '["general-science","ocean-climate"]'
       WHERE domain_ids = '["general-science"]';
   `,
+}, {
+  version: 7,
+  sql: `
+    DROP INDEX IF EXISTS chat_messages_session_created;
+    DROP TABLE IF EXISTS chat_messages;
+  `,
 }];
 
 export const KNOWLEDGE_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;

@@ -1,25 +1,25 @@
 import { useState } from "react";
-import type { ProjectResearchWorkflow } from "@xiling/contracts";
+import type { ProjectResearchWorkflow } from "@xiling/domain-ocean";
 
 const stageLabels: Record<ProjectResearchWorkflow["status"], string> = {
   draft: "等待元数据探测", probing: "正在获取元数据", pending_approval: "等待审批", approved: "已批准", downloading: "正在下载", analyzing: "正在计算与审查", completed: "闭环完成", rejected: "已拒绝", failed: "执行失败", cancelled: "已取消",
 };
 const formatBytes = (value?: number) => value === undefined ? "等待探测" : value < 1024 * 1024 ? `${Math.ceil(value / 1024)} KB` : `${(value / 1024 / 1024).toFixed(1)} MB`;
 const artifactHref = (uri: string, projectId: string) => {
-  const match = /^artifact:\/\/workflow\/(workflow-[0-9a-f-]{36})\/(.+)$/.exec(uri);
-  return match ? `/api/gate4/workflow-artifacts/${match[1]}/${match[2]}?projectId=${encodeURIComponent(projectId)}` : undefined;
+  if (/^artifact:\/\/sha256\/[a-f0-9]{64}$/.test(uri)) return `/api/v1/artifact-content?projectId=${encodeURIComponent(projectId)}&uri=${encodeURIComponent(uri)}`;
+  return undefined;
 };
 
 export function ResearchWorkflowCard({ workflow, onChange }: { workflow: ProjectResearchWorkflow; onChange: (workflow: ProjectResearchWorkflow) => void }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const invoke = async (action: string) => {
-    const response = await fetch(`/api/gate4/research-workflows/${encodeURIComponent(workflow.id)}/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: workflow.projectId }) });
+    const response = await fetch(`/api/v1/research-workflows/${encodeURIComponent(workflow.id)}/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: workflow.projectId }) });
     const body = await response.json() as ProjectResearchWorkflow | { error: string };
     if (!response.ok) throw new Error("error" in body ? body.error : `HTTP ${response.status}`);
     onChange(body as ProjectResearchWorkflow); return body as ProjectResearchWorkflow;
   };
-  const refresh = async () => { const response = await fetch(`/api/gate4/research-workflows?projectId=${encodeURIComponent(workflow.projectId)}&sessionId=${encodeURIComponent(workflow.sessionId)}`); if (response.ok) { const items = await response.json() as ProjectResearchWorkflow[]; const current = items.find((item) => item.id === workflow.id); if (current) onChange(current); } };
+  const refresh = async () => { const response = await fetch(`/api/v1/research-workflows?projectId=${encodeURIComponent(workflow.projectId)}&sessionId=${encodeURIComponent(workflow.sessionId)}`); if (response.ok) { const items = await response.json() as ProjectResearchWorkflow[]; const current = items.find((item) => item.id === workflow.id); if (current) onChange(current); } };
   const act = async (action: "probe" | "reject" | "reset" | "settle") => {
     setBusy(action); setError(""); try { await invoke(action); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); await refresh(); } finally { setBusy(""); }
   };

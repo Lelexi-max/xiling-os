@@ -27,7 +27,7 @@ export function planWindowsImport(originalPath: string): WindowsImportPlan {
       throw new Error(`Unsafe Windows path segment: ${segment}`);
     }
   }
-  if (originalPath.length > 260) throw new Error("Windows path exceeds the Gate 2 safe import length");
+  if (originalPath.length > 260) throw new Error("Windows path exceeds the safe import length");
 
   const displayName = path.win32.basename(originalPath);
   const digest = createHash("sha256").update(originalPath.normalize("NFC")).digest("hex");

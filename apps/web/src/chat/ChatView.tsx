@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FC } from "react";
-import type { AgentInputAttachment, ChatMessageRecord, ContextAssemblyTrace, Gate4Project, ModelRuntimeStatus, ProjectItem, ProjectResearchWorkflow, WikiPageDetail } from "@xiling/contracts";
+import type { AgentInputAttachment, ChatMessageRecord, ContextAssemblyTrace, ResearchProject, ModelRuntimeStatus, ProjectItem, WikiPageDetail } from "@xiling/contracts";
+import type { ProjectResearchWorkflow } from "@xiling/domain-ocean";
 import { useConversations } from "../workspace/ConversationContext.js";
 import { ResearchWorkflowCard } from "./ResearchWorkflowCard.js";
 import { runResearchTurn } from "../lib/research-session-client.js";
@@ -27,7 +28,7 @@ type UiMessage = {
   runId?: string;
   attachments?: Array<AgentInputAttachment & { url: string }>;
 };
-const welcomeMessage = (project: Gate4Project): UiMessage => ({ id: `welcome-${project.id}`, role: "assistant", text: `已进入项目“${project.name}”。当前研究问题：${project.researchQuestion}`, status: "complete" });
+const welcomeMessage = (project: ResearchProject): UiMessage => ({ id: `welcome-${project.id}`, role: "assistant", text: `已进入项目“${project.name}”。当前研究问题：${project.researchQuestion}`, status: "complete" });
 type ToolActivity = { callId: string; name: string; status: "running" | "complete" | "failed" };
 
 const convertMessage = (message: UiMessage): ThreadMessageLike => ({
@@ -63,7 +64,7 @@ function extractText(content: readonly { type: string; text?: string }[]): strin
   return content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n");
 }
 
-export function ChatView({ project }: { project: Gate4Project }) {
+export function ChatView({ project }: { project: ResearchProject }) {
   const { sessions, activeSessionId, ensureSession, refreshSessions } = useConversations();
   const visibleSessionRef = useRef(activeSessionId);
   visibleSessionRef.current = activeSessionId;
@@ -94,7 +95,7 @@ export function ChatView({ project }: { project: Gate4Project }) {
     setRunning(false);
     if (activeSessionId) {
       setMessages([welcomeMessage(project)]);
-      void fetch(`/api/gate4/chat-sessions/${encodeURIComponent(activeSessionId)}/messages`).then(async (response) => {
+      void fetch(`/api/v1/chat-sessions/${encodeURIComponent(activeSessionId)}/messages`).then(async (response) => {
         if (!response.ok) throw new Error(`会话消息加载失败：${response.status}`);
         const records = await response.json() as ChatMessageRecord[];
         const restored: UiMessage[] = [welcomeMessage(project), ...records.map((record) => ({ id: record.id, role: record.role, text: record.text, status: record.status, sourceEntryId: record.id, ...(record.attachments?.length ? { attachments: record.attachments.map((attachment) => ({ ...attachment, url: `/api/agent-center/attachments/${encodeURIComponent(attachment.id)}?projectId=${encodeURIComponent(project.id)}` })) } : {}) }))];
@@ -108,7 +109,7 @@ export function ChatView({ project }: { project: Gate4Project }) {
   }, [project.id, activeSessionId]);
   useEffect(() => {
     if (!activeSessionId) { setWorkflows([]); return; }
-    void fetch(`/api/gate4/research-workflows?projectId=${encodeURIComponent(project.id)}&sessionId=${encodeURIComponent(activeSessionId)}`).then((response) => response.ok ? response.json() : []).then((items) => setWorkflows(items as ProjectResearchWorkflow[]));
+    void fetch(`/api/v1/research-workflows?projectId=${encodeURIComponent(project.id)}&sessionId=${encodeURIComponent(activeSessionId)}`).then((response) => response.ok ? response.json() : []).then((items) => setWorkflows(items as ProjectResearchWorkflow[]));
   }, [project.id, activeSessionId]);
   useEffect(() => { void fetch("/api/settings/models").then((response) => response.json()).then((body: { runtime: ModelRuntimeStatus }) => setModelRuntime(body.runtime)); }, []);
   useEffect(() => {
@@ -165,7 +166,7 @@ export function ChatView({ project }: { project: Gate4Project }) {
               setTools((current) => current.map((item) => item.callId === event.callId ? { ...item, status: "complete" } : item));
             }
             if (event.type === "workflow.projected") {
-              const response = await fetch(`/api/gate4/research-workflows?projectId=${encodeURIComponent(project.id)}&sessionId=${encodeURIComponent(session.id)}`);
+              const response = await fetch(`/api/v1/research-workflows?projectId=${encodeURIComponent(project.id)}&sessionId=${encodeURIComponent(session.id)}`);
               if (response.ok) setWorkflows(await response.json() as ProjectResearchWorkflow[]);
             }
             if (event.type === "tool.failed") setTools((current) => current.map((item) => item.callId === event.callId ? { ...item, status: "failed" } : item));
@@ -184,7 +185,7 @@ export function ChatView({ project }: { project: Gate4Project }) {
         setGraphRefreshKey((value) => value + 1);
         if (visibleSessionRef.current === session.id) {
           try {
-            const response = await fetch(`/api/gate4/chat-sessions/${encodeURIComponent(session.id)}/messages`);
+            const response = await fetch(`/api/v1/chat-sessions/${encodeURIComponent(session.id)}/messages`);
             if (response.ok) {
               const records = await response.json() as ChatMessageRecord[];
               setMessages([welcomeMessage(project), ...records.map((record) => ({ id: record.id, role: record.role, text: record.text, status: record.status, sourceEntryId: record.id, ...(record.attachments?.length ? { attachments: record.attachments.map((attachment) => ({ ...attachment, url: `/api/agent-center/attachments/${encodeURIComponent(attachment.id)}?projectId=${encodeURIComponent(project.id)}` })) } : {}) }))]);
@@ -214,12 +215,12 @@ export function ChatView({ project }: { project: Gate4Project }) {
     try {
       if (target === "task") {
         const provenance = lastAssistant.runId ? `\n\n来源 Agent Run：${lastAssistant.runId}` : "";
-        const response = await fetch("/api/gate4/project-items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, kind: "task", title, notes: `${lastAssistant.text.slice(0, 1_700)}${provenance}` }) });
+        const response = await fetch("/api/v1/project-items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, kind: "task", title, notes: `${lastAssistant.text.slice(0, 1_700)}${provenance}` }) });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         await response.json() as ProjectItem;
       } else if (target === "wiki") {
         const provenance = lastAssistant.runId ? `\n\n---\n\n> 来源：Agent Run \`${lastAssistant.runId}\`。发布前请核对证据与结论。` : "";
-        const response = await fetch("/api/gate4/wiki/pages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, title, markdown: `# ${title}\n\n${lastAssistant.text}${provenance}` }) });
+        const response = await fetch("/api/v1/wiki/pages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, title, markdown: `# ${title}\n\n${lastAssistant.text}${provenance}` }) });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         await response.json() as WikiPageDetail;
       }

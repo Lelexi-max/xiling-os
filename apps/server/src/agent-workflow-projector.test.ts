@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteAgentSessionStore } from "@xiling/agent-harness";
-import type { OceanSubsetRequest, ProjectResearchWorkflow } from "@xiling/contracts";
+import type { OceanSubsetRequest, ProjectResearchWorkflow } from "@xiling/domain-ocean";
 import { projectAgentWorkflowDraft, reconcileAgentWorkflowDrafts } from "./agent-workflow-projector.js";
 
 const request: OceanSubsetRequest = { connectorId: "erddap", datasetId: "sst", variables: ["sst"], region: { west: 110, east: 120, south: 10, north: 20 }, time: { start: "2024-01-01", end: "2024-01-02" }, outputFormat: "NetCDF" };

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { KnowledgeService } from "@xiling/knowledge";
 import { FileLiteratureCache, LiteratureSearchService, OpenAlexProvider, SemanticScholarProvider } from "@xiling/literature";
 import { ScienceDomainRegistry } from "@xiling/science-domains";
+import { OCEAN_CLIMATE_DOMAIN } from "@xiling/domain-ocean";
 import { agentEntryReaderTool, agentHistorySearchTool, researchCapabilityCatalog, researchCapabilityCatalogFor, selectResearchCapabilities, selectResearchTools, shouldOfferResearchDelegation } from "./agent-tools.js";
 
 describe("project-scoped Pi research tools", () => {
@@ -22,7 +23,8 @@ describe("project-scoped Pi research tools", () => {
       readAgentEntry: async (entryId: string, offsetChars: number, maxChars: number) => ({ entryId, offsetChars, text: "durable-full-text".slice(offsetChars, offsetChars + maxChars), truncated: false }),
       searchAgentHistory: async (query: string, limit: number) => [{ entryId: "entry-1", kind: "assistant", excerpt: query, createdAt: String(limit) }],
     };
-    const oceanCatalog = researchCapabilityCatalogFor(new ScienceDomainRegistry().resolve(["ocean-climate"]).capabilities);
+    const domains = new ScienceDomainRegistry(); domains.register(OCEAN_CLIMATE_DOMAIN);
+    const oceanCatalog = researchCapabilityCatalogFor(domains.resolve(["ocean-climate"]).capabilities);
 
     expect(selectResearchTools("总结当前项目", services).map((tool) => tool.name)).toEqual(["read_project_context"]);
     expect(selectResearchTools("检索 Argo 海洋热浪论文并规划 NetCDF 切片", services, oceanCatalog).map((tool) => tool.name)).toEqual(["read_project_context", "search_literature", "plan_ocean_data_subset"]);
@@ -37,7 +39,7 @@ describe("project-scoped Pi research tools", () => {
     expect(shouldOfferResearchDelegation("比较两种方法，并检查复现条件")).toBe(true);
     expect(shouldOfferResearchDelegation("解释一下当前项目")).toBe(false);
     const artifact = selectResearchTools("检查 Artifact 审阅报告", services).find((tool) => tool.name === "read_artifact_excerpt")!;
-    await expect(artifact.execute("call-1", { uri: "artifact://workflow/run/reviewer-report.json", offsetBytes: 0, maxBytes: 500 }, undefined, undefined)).resolves.toMatchObject({ details: { text: "fixture" } });
+    await expect(artifact.execute("call-1", { uri: `artifact://sha256/${"a".repeat(64)}`, offsetBytes: 0, maxBytes: 500 }, undefined, undefined)).resolves.toMatchObject({ details: { text: "fixture" } });
     await expect(agentHistorySearchTool(services).execute("call-2", { query: "旧决策", limit: 3 }, undefined, undefined)).resolves.toMatchObject({ details: [{ entryId: "entry-1", excerpt: "旧决策" }] });
     await expect(agentEntryReaderTool(services).execute("call-3", { entryId: "entry-1", offsetChars: 0, maxChars: 500 }, undefined, undefined)).resolves.toMatchObject({ details: { text: "durable-full-text" } });
     knowledge.close();

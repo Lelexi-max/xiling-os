@@ -65,15 +65,6 @@ export const chatSessions = sqliteTable("chat_sessions", {
   updatedAt: text("updated_at").notNull(),
 });
 
-export const chatMessages = sqliteTable("chat_messages", {
-  id: text().primaryKey(),
-  sessionId: text("session_id").notNull().references(() => chatSessions.id),
-  role: text().notNull(),
-  text: text().notNull(),
-  status: text().notNull(),
-  createdAt: text("created_at").notNull(),
-});
-
 export const chatSessionContexts = sqliteTable("chat_session_contexts", {
   sessionId: text("session_id").primaryKey().references(() => chatSessions.id),
   activeNodeId: text("active_node_id").notNull(),

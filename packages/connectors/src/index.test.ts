@@ -12,7 +12,7 @@ const base = {
   outputFormat: "NetCDF" as const,
 };
 
-describe("Gate 4 ocean connector preflight", () => {
+describe("ocean connector preflight", () => {
   it("exposes exactly four lazy connector descriptors", () => {
     expect(listConnectors().map((item) => item.id)).toEqual(["erddap", "argo-gdac", "copernicus-marine", "nasa-harmony"]);
   });

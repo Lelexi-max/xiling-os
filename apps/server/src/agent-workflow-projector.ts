@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { connectorRequestSchema, toOceanSubsetRequest } from "@xiling/api-contracts";
 import type { SqliteAgentSessionStore } from "@xiling/agent-harness";
-import type { AgentStreamEvent, OceanSubsetRequest, ProjectResearchWorkflow } from "@xiling/contracts";
+import type { AgentStreamEvent } from "@xiling/contracts";
+import type { OceanSubsetRequest, ProjectResearchWorkflow } from "@xiling/domain-ocean";
 
 export const WORKFLOW_DRAFT_PROJECTOR = "ocean-workflow-draft-v1" as const;
 type WorkflowProjectionEvent = Extract<AgentStreamEvent, { type: "workflow.projected" | "workflow.projection.failed" }>;

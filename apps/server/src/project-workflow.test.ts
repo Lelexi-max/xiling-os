@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ConnectorWorkflowService, FixtureConnectorAdapter, JsonConnectorJobRepository, preflightConnector } from "@xiling/connectors";
-import type { OceanSubsetRequest } from "@xiling/contracts";
+import type { OceanSubsetRequest } from "@xiling/domain-ocean";
 import { FixtureProjectAnalysisRunner, JsonProjectWorkflowRepository, ProjectWorkflowService, SqliteProjectWorkflowRepository } from "./project-workflow.js";
 
 const request: OceanSubsetRequest = { connectorId: "argo-gdac", datasetId: "argo-fixture", variables: ["TEMP", "PSAL", "PRES"], region: { west: 140, east: 150, south: 30, north: 40 }, depth: { min: 0, max: 200 }, time: { start: "2023-01-01", end: "2023-02-01" }, outputFormat: "NetCDF" };

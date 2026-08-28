@@ -93,7 +93,25 @@ export interface AgentTaskExecutor {
   }): Promise<Omit<AgentTaskResult, "delegationId" | "roleId" | "childSessionId">>;
 }
 
-const commonContract = "只完成声明的子任务；区分事实、推断和未知；提供稳定来源 URI；不得修改 Research Graph、Wiki 或项目状态；结果简洁并明确局限。";
+const commonContract = "只完成声明的子任务；区分事实、推断和未知；不得修改 Research Graph、Wiki 或项目状态。最终响应必须是一个 JSON 对象且只能包含 summary、sourceUris、artifactUris、limitations 四个字段；后三者必须是字符串数组，不得在 JSON 外输出文字。";
+
+export interface ChildAccessPolicy {
+  canReadEntity(entityId: string): boolean;
+  canReadSource(uri: string): boolean;
+  assertEntity(entityId: string): void;
+  assertSource(uri: string): void;
+}
+
+export function createChildAccessPolicy(manifest: ContextManifest, isolation: AgentIsolation): ChildAccessPolicy {
+  const entities = new Set(isolation === "scoped" ? manifest.researchEntityIds : []);
+  const sources = new Set(manifest.sourceUris);
+  return {
+    canReadEntity: (entityId) => entities.has(entityId),
+    canReadSource: (uri) => sources.has(uri),
+    assertEntity(entityId) { if (!entities.has(entityId)) throw new Error("Child Agent entity access denied by ContextManifest"); },
+    assertSource(uri) { if (!sources.has(uri)) throw new Error("Child Agent source access denied by ContextManifest"); },
+  };
+}
 
 export const PRESET_RESEARCH_AGENT_ROLES: readonly AgentRoleSpec[] = [
   {
@@ -203,20 +221,25 @@ export class MultiAgentOrchestrator {
     else this.store.updateDelegation(delegationId, { status: "queued" });
     let childRunId: string | undefined;
     let acquired = false;
+    const taskController = new AbortController();
+    const cancelFromParent = () => taskController.abort(input.signal?.reason ?? "parent cancelled");
+    input.signal?.addEventListener("abort", cancelFromParent, { once: true });
+    const timeout = setTimeout(() => taskController.abort("delegation duration budget exceeded"), input.budget.maxDurationMs);
     try {
-      await this.acquire(input.signal);
+      await this.acquire(taskController.signal);
       acquired = true;
-      const execution = await this.executor.execute({ delegationId, projectId: input.projectId, rootRunId: input.rootRunId, parentRunId: input.parentRunId, childSessionId, role, objective: input.task.objective, isolation, contextManifest: input.contextManifest, budget: input.budget, ...(input.signal ? { signal: input.signal } : {}), onRunStarted: (runId) => { childRunId = runId; this.store.updateDelegation(delegationId, { status: "running", childRunId: runId }); } });
+      const execution = await this.executor.execute({ delegationId, projectId: input.projectId, rootRunId: input.rootRunId, parentRunId: input.parentRunId, childSessionId, role, objective: input.task.objective, isolation, contextManifest: input.contextManifest, budget: input.budget, signal: taskController.signal, onRunStarted: (runId) => { childRunId = runId; this.store.updateDelegation(delegationId, { status: "running", childRunId: runId }); } });
+      if (input.budget.maxCost !== undefined && (execution.usage?.cost ?? 0) > input.budget.maxCost) throw new Error("Delegation cost budget exceeded");
       const result: AgentTaskResult = { delegationId, roleId: role.id, childSessionId, ...(childRunId ? { childRunId } : {}), ...execution };
       this.store.updateDelegation(delegationId, { status: result.status, ...(childRunId ? { childRunId } : {}), result, ...(result.error ? { error: result.error } : {}) });
       return result;
     } catch (error) {
-      const cancelled = input.signal?.aborted === true;
+      const cancelled = taskController.signal.aborted;
       const message = error instanceof Error ? error.message : String(error);
       const result: AgentTaskResult = { delegationId, roleId: role.id, childSessionId, ...(childRunId ? { childRunId } : {}), status: cancelled ? "cancelled" : "failed", summary: "", sourceUris: [], artifactUris: [], limitations: [], error: message };
       this.store.updateDelegation(delegationId, { status: result.status, ...(childRunId ? { childRunId } : {}), result, error: message });
       return result;
-    } finally { if (acquired) this.release(); }
+    } finally { clearTimeout(timeout); input.signal?.removeEventListener("abort", cancelFromParent); if (acquired) this.release(); }
   }
 
   private async acquire(signal?: AbortSignal): Promise<void> {
@@ -234,11 +257,20 @@ export class MultiAgentOrchestrator {
 }
 
 export function extractTaskResultText(text: string): Pick<AgentTaskResult, "summary" | "sourceUris" | "artifactUris" | "limitations"> {
-  const sourceUris = [...new Set(text.match(/(?:https?:\/\/|project:\/\/|dataset:\/\/|artifact:\/\/|doi:)[^\s,;，。)\]]+/giu) ?? [])];
-  return {
-    summary: text.trim(),
-    sourceUris,
-    artifactUris: sourceUris.filter((uri) => uri.startsWith("artifact://")),
-    limitations: text.split(/\r?\n/u).filter((line) => /局限|限制|不确定|缺少|unknown|limitation|uncertain/iu.test(line)).slice(0, 8),
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { throw new Error("Subagent handoff must be valid JSON"); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Subagent handoff must be a JSON object");
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (keys.join(",") !== "artifactUris,limitations,sourceUris,summary") throw new Error("Subagent handoff has an invalid schema");
+  const stringArray = (name: string, limit: number) => {
+    const items = record[name];
+    if (!Array.isArray(items) || items.length > limit || !items.every((item) => typeof item === "string" && item.length <= 2_000)) throw new Error(`Subagent handoff ${name} is invalid`);
+    return [...new Set(items as string[])];
   };
+  if (typeof record.summary !== "string" || !record.summary.trim() || record.summary.length > 12_000) throw new Error("Subagent handoff summary is invalid");
+  const sourceUris = stringArray("sourceUris", 32);
+  const artifactUris = stringArray("artifactUris", 32);
+  if (artifactUris.some((uri) => !uri.startsWith("artifact://"))) throw new Error("Subagent handoff contains an invalid Artifact URI");
+  return { summary: record.summary.trim(), sourceUris, artifactUris, limitations: stringArray("limitations", 16) };
 }

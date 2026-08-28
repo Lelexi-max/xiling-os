@@ -46,7 +46,7 @@ export function PaperGraphView({ projectId, onNavigate }: { projectId: string; o
   };
 
   useEffect(() => {
-    void fetch(`/api/gate4/evidence?projectId=${encodeURIComponent(projectId)}`).then((response) => response.json()).then((records: EvidenceRecord[]) => {
+    void fetch(`/api/v1/evidence?projectId=${encodeURIComponent(projectId)}`).then((response) => response.json()).then((records: EvidenceRecord[]) => {
       setEvidence(records);
       setNoteDrafts(Object.fromEntries(records.map((record) => [record.paper.id, record.note])));
       setStanceDrafts(Object.fromEntries(records.map((record) => [record.paper.id, record.stance])));
@@ -57,7 +57,7 @@ export function PaperGraphView({ projectId, onNavigate }: { projectId: string; o
 
   const saveEvidence = async () => {
     if (!selected) return; setActionStatus("正在生成可追溯证据…");
-    const response = await fetch("/api/gate4/evidence", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId, paper: selected, note: noteDrafts[selected.id] ?? "", stance: stanceDrafts[selected.id] ?? "insufficient", confidence: confidenceDrafts[selected.id] ?? 0.5, sourceQuote: quoteDrafts[selected.id] ?? "", sourceLocator: locatorDrafts[selected.id] || selected.url, limitations: limitationDrafts[selected.id] ?? "", claimRevisionId: claimDrafts[selected.id] || undefined }) });
+    const response = await fetch("/api/v1/evidence", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId, paper: selected, note: noteDrafts[selected.id] ?? "", stance: stanceDrafts[selected.id] ?? "insufficient", confidence: confidenceDrafts[selected.id] ?? 0.5, sourceQuote: quoteDrafts[selected.id] ?? "", sourceLocator: locatorDrafts[selected.id] || selected.url, limitations: limitationDrafts[selected.id] ?? "", claimRevisionId: claimDrafts[selected.id] || undefined }) });
     if (response.ok) {
       const record = await response.json() as EvidenceRecord;
       setEvidence((current) => [record, ...current]);
@@ -68,7 +68,7 @@ export function PaperGraphView({ projectId, onNavigate }: { projectId: string; o
     const normalized = query.trim(); if (normalized.length < 2) { setSearchStatus("请输入至少 2 个字符"); return; }
     setSearchStatus("正在检索 Semantic Scholar…"); setSearching(true);
     try {
-      const response = await fetch(`/api/gate4/literature/search?q=${encodeURIComponent(normalized)}&limit=40`);
+      const response = await fetch(`/api/v1/literature/search?q=${encodeURIComponent(normalized)}&limit=40`);
       const result = await response.json() as LiteratureSearchResponse & { graph?: LiteratureGraph; error?: string };
       if (!response.ok) throw new Error(result.error ?? "检索失败");
       if (!result.graph) { setSearchStatus("没有找到可构图的论文"); return; }

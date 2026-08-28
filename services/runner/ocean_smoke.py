@@ -8,7 +8,7 @@ from xiling_runner import create_argo_fixture, inspect_argo_dataset, run_argo_an
 
 
 PLAN = {
-    "id": "plan-argo-gate3",
+    "id": "plan-argo-offline-smoke",
     "variables": ["TEMP", "PSAL", "PRES", "POSITION_QC"],
     "region": {"west": 132, "east": 150, "south": 12, "north": 30},
     "depth": {"min": 0, "max": 150},
@@ -17,7 +17,7 @@ PLAN = {
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="xiling-gate3-") as directory:
+    with tempfile.TemporaryDirectory(prefix="xiling-ocean-") as directory:
         root = Path(directory)
         fixture = create_argo_fixture(root / "argo-fixture.nc")
         metadata = inspect_argo_dataset(fixture)

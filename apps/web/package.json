@@ -13,6 +13,7 @@
     "@xiling/api-contracts": "workspace:*",
     "@milkdown/kit": "catalog:",
     "@xiling/contracts": "workspace:*",
+    "@xiling/domain-ocean": "workspace:*",
     "@xyflow/react": "12.11.3",
     "cytoscape": "3.34.1",
     "react": "19.2.8",

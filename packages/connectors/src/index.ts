@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import type { ConnectorDescriptor, ConnectorDownloadJob, ConnectorMetadataSummary, ConnectorPreflight, OceanConnectorId, OceanSubsetRequest, ResourceUri } from "@xiling/contracts";
+import type { ResourceUri } from "@xiling/contracts";
+import type { ConnectorDescriptor, ConnectorDownloadJob, ConnectorMetadataSummary, ConnectorPreflight, OceanConnectorId, OceanSubsetRequest } from "@xiling/domain-ocean";
 
 const descriptors: Record<OceanConnectorId, ConnectorDescriptor> = {
   erddap: {

@@ -17,6 +17,24 @@
 5. **上下文机制纠偏**：使用用户选择的 Research Graph 活动实体、有限两跳邻域、显式引用、Capsule、按需 Skill/tool、组装缓存和 TokenLedger；不把循环科研图当成对话树，也不引入正常任务固定 token 上限。
 6. **回归门禁**：新增 API 契约、SSE 分片、迁移版本、画布并发与架构依赖测试；运行全量 typecheck/test/build/smoke/compliance。
 
+## 2026-08-28 R0–R8 收口状态
+
+本节是现行执行清单；上面的旧 Gate 修订保留决策背景，不再用 Gate 编号组织代码。
+
+| 阶段 | 状态 | 已完成的可验证结果 | 尚未满足的边界 |
+|---|---|---|---|
+| R0 架构宪法与黄金任务 | 完成本地验收 | 三图分离、单一事实源、领域中立、Pi 边界和上下文经济成为自动门禁 | 无 |
+| R1 组合根与遗留清理 | 完成本地验收 | 正式 API 使用 `/api/v1`；Chat 只有 Agent Store；运行数据目录改为 `workspace`；领域安装集中在单一组合点 | 历史测试脚本名只作验收记录，不是产品 API |
+| R2 Artifact Registry | 完成本地验收 | SHA-256 URI、项目隔离、分段读取、完整性、生命周期、Workflow 导入和 Web Viewer | 发布备份/垃圾回收策略仍需真实数据规模验证 |
+| R3 通用执行内核 | 完成参考纵向切片 | Plan/Spec/Approval/Receipt、SQLite 幂等、超时/取消；表格领域端到端使用 | 海洋 Workflow 仍是领域适配器，后续向 Execution port 收敛；真实容器 digest 未验收 |
+| R4 上下文质量 | 完成本地验收 | token 组成、来源覆盖、重复历史合并、按需 Skill/tool/MCP、证据 locator 缺口可见 | 真实模型的长任务质量/成本回归需独立凭据验收 |
+| R5 多智能体隔离 | 完成本地验收 | 独立 Session、Manifest allowlist、严格 JSON Handoff、工具/时间/成本预算、父取消 | 真实 Provider 并发与限流需凭据验收 |
+| R6 Attention UX | 完成代码与集成测试 | 审批、失败、证据缺口、待审提案和 Agent 异常聚合到“需要关注” | 发布前仍需正式可用性走查 |
+| R7 第二科学领域 | 完成参考纵向切片 | 表格实验 Manifest、CSV/TSV 导入、统计 Recipe、Viewer 描述、失败测试和 Artifact 输出 | 安装/禁用/升级 UI 仍是后续插件化能力 |
+| R8 发布级验证 | 部分完成 | 确定性离线检查全部通过；macOS arm64 上构建固定基础镜像并以 `--network none` 通过基础、Argo 和四连接器 smoke | 真实 Windows 11/WSL2、签名安装介质和真实科研任务仍是发布阻塞项 |
+
+收口规则：本地测试通过不能替代 R8 外部环境验证；同样，R8 的平台工作不能反向引入领域分支、双写或把大 payload 放回上下文。
+
 ## 对旧计划的修订
 
 - Gate 1–4 不再作为代码目录的长期架构；它们只保留为产品验收记录。

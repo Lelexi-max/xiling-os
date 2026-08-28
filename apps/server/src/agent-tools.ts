@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import type { RuntimeTool } from "@xiling/pi-runtime";
-import type { Gate4Project, OceanSubsetRequest } from "@xiling/contracts";
+import type { ResearchProject } from "@xiling/contracts";
+import type { OceanSubsetRequest } from "@xiling/domain-ocean";
 import type { AgentKnowledgeReader } from "@xiling/knowledge";
 import { LiteratureSearchService } from "@xiling/literature";
 import { preflightConnector } from "@xiling/connectors";
@@ -9,7 +10,7 @@ import type { AgentRoleSpec, AgentTaskRequest, DelegationMode } from "@xiling/mu
 import type { ScienceDomainCapabilityContribution } from "@xiling/science-domains";
 
 type ToolServices = {
-  project: Gate4Project;
+  project: ResearchProject;
   knowledge: AgentKnowledgeReader;
   literature: LiteratureSearchService;
   readArtifact?: (uri: string, offsetBytes: number, maxBytes: number) => Promise<{ uri: string; offsetBytes: number; text: string; truncated: boolean }>;

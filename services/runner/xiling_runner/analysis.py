@@ -71,7 +71,7 @@ def run_analysis(input_path: Path, output_dir: Path) -> dict[str, object]:
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     crate = ROCrate()
-    crate.name = "Xi Ling OS Gate 2 SST analysis"
+    crate.name = "Xi Ling OS SST analysis"
     crate.description = "Reproducible smoke analysis generated inside the scientific runner."
     crate.add_file(str(input_path), properties={"name": input_path.name, "sha256": sha256(input_path)})
     for artifact in (csv_path, image_path, manifest_path):

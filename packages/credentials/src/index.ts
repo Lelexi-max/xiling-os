@@ -10,7 +10,7 @@ const any = (...ids: string[]) => (fields: Set<string>) => ids.some((id) => fiel
 const field = (id: string, label: string, secret: boolean, placeholder: string): CredentialFieldDescriptor => ({ id, label, secret, placeholder });
 const capability = (input: ModelProviderCapabilities["input"], output: ModelProviderCapabilities["output"], note: string, modelDependent = true): ModelProviderCapabilities => ({ input, output, note, modelDependent });
 
-const definitions: Record<CredentialProviderId, ProviderDefinition> = {
+const definitions: Record<string, ProviderDefinition> = {
   openai: { id: "openai", category: "model", title: "OpenAI", description: "Responses、语音与图像生成 API", documentationUrl: "https://platform.openai.com/api-keys", fields: [field("apiKey", "API Key", true, "sk-…")], env: { apiKey: "OPENAI_API_KEY" }, valid: all("apiKey"), capabilities: capability(["text", "image", "audio"], ["text", "image"], "视频与语音使用独立端点；具体能力取决于模型") },
   anthropic: { id: "anthropic", category: "model", title: "Anthropic", description: "Claude Messages API", documentationUrl: "https://console.anthropic.com/settings/keys", fields: [field("apiKey", "API Key", true, "sk-ant-…")], env: { apiKey: "ANTHROPIC_API_KEY" }, valid: all("apiKey"), capabilities: capability(["text", "image"], ["text"], "支持视觉与文档理解；当前主要输出文本") },
   google: { id: "google", category: "model", title: "Google Gemini", description: "原生多模态理解与生成", documentationUrl: "https://aistudio.google.com/app/apikey", fields: [field("apiKey", "API Key", true, "AIza…")], env: { apiKey: "GEMINI_API_KEY" }, valid: all("apiKey"), capabilities: capability(["text", "image", "audio", "video"], ["text", "image"], "不同 Gemini 模型的输出模态不同") },
@@ -27,6 +27,12 @@ const definitions: Record<CredentialProviderId, ProviderDefinition> = {
   "copernicus-marine": { id: "copernicus-marine", category: "data", title: "Copernicus Marine", description: "Marine Data Store 账户", documentationUrl: "https://toolbox-docs.marine.copernicus.eu/en/stable/usage/login-usage.html", fields: [field("username", "用户名或邮箱", false, "name@example.com"), field("password", "密码", true, "••••••••")], env: { username: "COPERNICUSMARINE_SERVICE_USERNAME", password: "COPERNICUSMARINE_SERVICE_PASSWORD" }, valid: all("username", "password") },
   "nasa-earthdata": { id: "nasa-earthdata", category: "data", title: "NASA Earthdata", description: "Harmony / Earthdata Login；Bearer Token 优先", documentationUrl: "https://harmony.earthdata.nasa.gov/docs", fields: [field("token", "Bearer Token", true, "EDL bearer token"), field("username", "EDL 用户名", false, "Earthdata username"), field("password", "EDL 密码", true, "••••••••")], env: { token: "EARTHDATA_TOKEN", username: "EARTHDATA_USERNAME", password: "EARTHDATA_PASSWORD" }, valid: (fields) => any("token")(fields) || all("username", "password")(fields) },
 };
+
+function requireDefinition(id: CredentialProviderId): ProviderDefinition {
+  const definition = definitions[id];
+  if (!definition) throw new Error(`Unknown credential provider: ${id}`);
+  return definition;
+}
 
 type SecretData = Record<string, Record<string, string> | undefined>;
 type EncryptedFile = { version: 1; iv: string; tag: string; ciphertext: string };
@@ -46,7 +52,7 @@ export class CredentialStore {
   listStatus(): CredentialProviderStatus[] { return Object.values(definitions).map((definition) => this.status(definition.id)); }
 
   status(id: CredentialProviderId): CredentialProviderStatus {
-    const definition = definitions[id];
+    const definition = requireDefinition(id);
     const environmentFields = new Set(Object.entries(definition.env).filter(([, name]) => Boolean(this.environment[name])).map(([fieldId]) => fieldId));
     const localFields = new Set(Object.entries(this.data[id] ?? {}).filter(([, value]) => Boolean(value)).map(([fieldId]) => fieldId));
     const configuredFields = [...new Set([...environmentFields, ...localFields])];
@@ -55,19 +61,20 @@ export class CredentialStore {
   }
 
   get(id: CredentialProviderId, fieldId: string): string | undefined {
-    const envName = definitions[id].env[fieldId]; return (envName ? this.environment[envName] : undefined) ?? this.data[id]?.[fieldId];
+    const envName = requireDefinition(id).env[fieldId]; return (envName ? this.environment[envName] : undefined) ?? this.data[id]?.[fieldId];
   }
 
   async set(id: CredentialProviderId, values: Record<string, string>): Promise<CredentialProviderStatus> {
-    const allowed = new Set(definitions[id].fields.map((item) => item.id));
+    const definition = requireDefinition(id);
+    const allowed = new Set(definition.fields.map((item) => item.id));
     const cleaned = Object.fromEntries(Object.entries(values).filter(([fieldId, value]) => allowed.has(fieldId) && value.length > 0).map(([fieldId, value]) => [fieldId, value]));
     if (Object.values(cleaned).some((value) => value.length > 20_000)) throw new Error("credential field is too large");
     const merged = { ...(this.data[id] ?? {}), ...cleaned };
-    if (!definitions[id].valid(new Set(Object.keys(merged)))) throw new Error("required credential fields are missing");
+    if (!definition.valid(new Set(Object.keys(merged)))) throw new Error("required credential fields are missing");
     this.data = { ...this.data, [id]: merged }; await this.persist(); return this.status(id);
   }
 
-  async clear(id: CredentialProviderId): Promise<CredentialProviderStatus> { const next = { ...this.data }; delete next[id]; this.data = next; await this.persist(); return this.status(id); }
+  async clear(id: CredentialProviderId): Promise<CredentialProviderStatus> { requireDefinition(id); const next = { ...this.data }; delete next[id]; this.data = next; await this.persist(); return this.status(id); }
 
   getSecret(namespace: string, fieldId: string): string | undefined {
     return this.data[namespace]?.[fieldId];

@@ -1,14 +1,14 @@
 import type {
-  CanvasBranchContext, ChatMessageRecord, ChatSessionSummary, ContextCapsule, EvidenceRecord,
-  Gate4Project, PaperRecord, ProjectItem, ProjectItemKind, ResourceUri, WikiPageDetail,
+  CanvasBranchContext, ChatSessionSummary, ContextCapsule, EvidenceRecord,
+  ResearchProject, PaperRecord, ProjectItem, ProjectItemKind, ResourceUri, WikiPageDetail,
   WikiPageSummary, WikiSearchResult,
 } from "@xiling/contracts";
 
 export interface ProjectStore {
-  listProjects(): Gate4Project[];
-  getProject(id: string): Gate4Project | undefined;
-  createProject(input: { name: string; description: string; researchQuestion: string; domainIds: string[] }): Gate4Project;
-  updateProject(id: string, patch: Partial<Pick<Gate4Project, "name" | "description" | "researchQuestion" | "domainIds" | "status">>): Gate4Project | undefined;
+  listProjects(): ResearchProject[];
+  getProject(id: string): ResearchProject | undefined;
+  createProject(input: { name: string; description: string; researchQuestion: string; domainIds: string[] }): ResearchProject;
+  updateProject(id: string, patch: Partial<Pick<ResearchProject, "name" | "description" | "researchQuestion" | "domainIds" | "status">>): ResearchProject | undefined;
 }
 export interface ProjectItemStore {
   listItems(projectId: string): ProjectItem[];
@@ -21,8 +21,6 @@ export interface ConversationStore {
   createChatSession(projectId: string, title: string): ChatSessionSummary;
   getChatSession(id: string): ChatSessionSummary | undefined;
   archiveChatSession(id: string): boolean;
-  listChatMessages(sessionId: string): ChatMessageRecord[];
-  appendChatMessage(sessionId: string, input: Pick<ChatMessageRecord, "role" | "text" | "status">): ChatMessageRecord;
   getChatSessionContext(sessionId: string): CanvasBranchContext | undefined;
   setChatSessionContext(sessionId: string, context: Omit<CanvasBranchContext, "updatedAt">): CanvasBranchContext;
 }

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ProjectResearchWorkflow } from "@xiling/contracts";
+import type { ProjectResearchWorkflow } from "@xiling/domain-ocean";
 import { ResearchWorkflowCard } from "../chat/ResearchWorkflowCard.js";
 
 export function ProjectWorkflowDashboard({ projectId }: { projectId: string }) {
   const [workflows, setWorkflows] = useState<ProjectResearchWorkflow[]>([]);
   const [status, setStatus] = useState("正在读取项目科研闭环…");
   const load = useCallback(async () => {
-    const response = await fetch(`/api/gate4/research-workflows?projectId=${encodeURIComponent(projectId)}`);
+    const response = await fetch(`/api/v1/research-workflows?projectId=${encodeURIComponent(projectId)}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const items = await response.json() as ProjectResearchWorkflow[];
     setWorkflows(items); setStatus(items.length ? `${items.length} 个真实科研 Workflow` : "当前项目还没有科研 Workflow");

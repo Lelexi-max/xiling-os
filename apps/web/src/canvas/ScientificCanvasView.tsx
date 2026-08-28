@@ -251,7 +251,7 @@ export function ScientificCanvasView({ projectId, onNavigate }: { projectId: str
     if (!activeSessionId || !selectedId) return;
     setStatus("正在更新 Chat 上下文…");
     try {
-      await apiJson(`/api/gate4/chat-sessions/${encodeURIComponent(activeSessionId)}/context`, jsonInit("PUT", { activeNodeId: selectedId, quotedNodeIds: quotedIds.filter((id) => id !== selectedId) }));
+      await apiJson(`/api/v1/chat-sessions/${encodeURIComponent(activeSessionId)}/context`, jsonInit("PUT", { activeNodeId: selectedId, quotedNodeIds: quotedIds.filter((id) => id !== selectedId) }));
       await refreshSessions(activeSessionId);
       setStatus("已将科研实体与显式引用设为当前 Chat 上下文");
     } catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }

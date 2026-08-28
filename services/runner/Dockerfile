@@ -12,8 +12,8 @@ RUN pip install --no-cache-dir --requirement requirements.txt
 
 COPY xiling_runner ./xiling_runner
 COPY smoke.py ./smoke.py
-COPY gate3_smoke.py ./gate3_smoke.py
-COPY run_gate3.py ./run_gate3.py
+COPY ocean_smoke.py ./ocean_smoke.py
+COPY run_ocean_analysis.py ./run_ocean_analysis.py
 COPY run_connector.py ./run_connector.py
 COPY connector_smoke.py ./connector_smoke.py
 RUN mkdir -p /workspace && chown -R runner:runner /workspace /opt/xiling-runner

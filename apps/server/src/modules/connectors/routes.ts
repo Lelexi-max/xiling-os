@@ -5,7 +5,7 @@ import { z } from "zod";
 import { connectorJobSchema, connectorRequestSchema, idParamsSchema, toOceanSubsetRequest } from "@xiling/api-contracts";
 import { listConnectors, preflightConnector, resolveConnectorMetadata, type ConnectorMetadataProbe, type ConnectorWorkflowService } from "@xiling/connectors";
 import type { CredentialStore } from "@xiling/credentials";
-import type { ConnectorMetadataSummary } from "@xiling/contracts";
+import type { ConnectorMetadataSummary } from "@xiling/domain-ocean";
 
 export interface ConnectorRouteDependencies {
   root: string;
@@ -24,7 +24,7 @@ const credentialIdFor = (connectorId: string) => connectorId === "copernicus-mar
 export function registerConnectorRoutes(app: FastifyInstance, dependencies: ConnectorRouteDependencies): void {
   const { root, credentials, credentialsReady, probe, workflow, workflowReady, metadata, activeRuns } = dependencies;
 
-  app.get("/api/gate4/connectors", async () => {
+  app.get("/api/v1/connectors", async () => {
     await credentialsReady;
     return listConnectors().map((connector) => {
       const credentialId = credentialIdFor(connector.id);
@@ -33,7 +33,7 @@ export function registerConnectorRoutes(app: FastifyInstance, dependencies: Conn
     });
   });
 
-  app.post("/api/gate4/connectors/preflight", async (request, reply) => {
+  app.post("/api/v1/connectors/preflight", async (request, reply) => {
     const parsed = connectorRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     try {
@@ -48,7 +48,7 @@ export function registerConnectorRoutes(app: FastifyInstance, dependencies: Conn
     }
   });
 
-  app.post("/api/gate4/connectors/metadata", async (request, reply) => {
+  app.post("/api/v1/connectors/metadata", async (request, reply) => {
     const parsed = connectorRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     await credentialsReady;
@@ -66,8 +66,8 @@ export function registerConnectorRoutes(app: FastifyInstance, dependencies: Conn
     }
   });
 
-  app.get("/api/gate4/connector-jobs", async () => { await workflowReady; return workflow.list(); });
-  app.post("/api/gate4/connector-jobs", async (request, reply) => {
+  app.get("/api/v1/connector-jobs", async () => { await workflowReady; return workflow.list(); });
+  app.post("/api/v1/connector-jobs", async (request, reply) => {
     const parsed = connectorJobSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     await Promise.all([credentialsReady, workflowReady]);
@@ -81,15 +81,15 @@ export function registerConnectorRoutes(app: FastifyInstance, dependencies: Conn
   });
 
   const parseId = (value: unknown) => idParamsSchema.safeParse(value);
-  app.post("/api/gate4/connector-jobs/:id/approve", async (request, reply) => {
+  app.post("/api/v1/connector-jobs/:id/approve", async (request, reply) => {
     const parsed = parseId(request.params); if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     await workflowReady; try { return await workflow.approve(parsed.data.id); } catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) }); }
   });
-  app.post("/api/gate4/connector-jobs/:id/reject", async (request, reply) => {
+  app.post("/api/v1/connector-jobs/:id/reject", async (request, reply) => {
     const parsed = parseId(request.params); if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     await workflowReady; try { return await workflow.reject(parsed.data.id); } catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) }); }
   });
-  app.post("/api/gate4/connector-jobs/:id/run", async (request, reply) => {
+  app.post("/api/v1/connector-jobs/:id/run", async (request, reply) => {
     const parsed = parseId(request.params); if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     await workflowReady; if (activeRuns.has(parsed.data.id)) return reply.code(409).send({ error: "connector download is already active" });
     const controller = new AbortController(); activeRuns.set(parsed.data.id, controller);
@@ -97,19 +97,19 @@ export function registerConnectorRoutes(app: FastifyInstance, dependencies: Conn
     catch (error) { return reply.code(controller.signal.aborted ? 499 : 409).send({ error: error instanceof Error ? error.message : String(error) }); }
     finally { activeRuns.delete(parsed.data.id); }
   });
-  app.post("/api/gate4/connector-jobs/:id/cancel", async (request, reply) => {
+  app.post("/api/v1/connector-jobs/:id/cancel", async (request, reply) => {
     const parsed = parseId(request.params); if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     const controller = activeRuns.get(parsed.data.id); if (!controller) return reply.code(409).send({ error: "connector download is not active" });
     controller.abort("cancelled by user"); return { status: "cancelling" };
   });
 
-  app.get("/api/gate4/connector-artifacts/:sha", async (request, reply) => {
+  app.get("/api/v1/connector-artifacts/:sha", async (request, reply) => {
     const parsed = z.object({ sha: z.string().regex(/^[a-f0-9]{64}$/) }).safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: "invalid artifact hash" });
     try { return reply.type("application/json; charset=utf-8").send(await readFile(resolve(root, "connector-artifacts", `${parsed.data.sha}.json`))); }
     catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT" ? reply.code(404).send({ error: "Artifact not found" }) : reply.code(500).send({ error: "Artifact read failed" }); }
   });
-  app.get("/api/gate4/connector-run-artifacts/:runId/*", async (request, reply) => {
+  app.get("/api/v1/connector-run-artifacts/:runId/*", async (request, reply) => {
     const parsed = z.object({ runId: z.string().uuid(), "*": z.string().min(1) }).safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid connector artifact path" });
     const relative = parsed.data["*"];

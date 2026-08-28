@@ -355,6 +355,8 @@ export class TokenLedger {
     averageEstimatedContextTokens: number;
     averageContextUtilization: number;
     omittedHistoryEntries: number;
+    averageSourceCoverage: number;
+    deduplicatedHistoryEntries: number;
   }> {
     const entries = await this.list(limit);
     const withEstimate = entries.filter((entry) => entry.contextEstimatedTokens !== undefined && entry.contextAvailableTokens !== undefined);
@@ -368,6 +370,8 @@ export class TokenLedger {
       averageEstimatedContextTokens: withEstimate.length ? Math.round(withEstimate.reduce((total, entry) => total + (entry.contextEstimatedTokens ?? 0), 0) / withEstimate.length) : 0,
       averageContextUtilization: withEstimate.length ? utilization / withEstimate.length : 0,
       omittedHistoryEntries: entries.filter((entry) => (entry.omittedHistoryCount ?? 0) > 0).length,
+      averageSourceCoverage: entries.length ? entries.reduce((total, entry) => total + (entry.contextSourceCoverage ?? 1), 0) / entries.length : 1,
+      deduplicatedHistoryEntries: entries.reduce((total, entry) => total + (entry.contextDuplicateHistoryCount ?? 0), 0),
     };
   }
 }

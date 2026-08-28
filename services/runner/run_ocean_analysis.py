@@ -8,7 +8,7 @@ from xiling_runner import create_argo_fixture, run_argo_analysis
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the Xi Ling OS Gate 3 Argo fixture")
+    parser = argparse.ArgumentParser(description="Run the Xi Ling OS Argo research fixture")
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--input", type=Path)

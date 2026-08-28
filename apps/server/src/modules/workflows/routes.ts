@@ -1,6 +1,4 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { readFile } from "node:fs/promises";
-import { resolve, sep } from "node:path";
 import { z } from "zod";
 import { idParamsSchema, projectWorkflowCreateSchema, toOceanSubsetRequest } from "@xiling/api-contracts";
 import type { ConversationStore, ProjectStore } from "@xiling/knowledge";
@@ -9,7 +7,6 @@ import type { ProjectWorkflowService } from "../../project-workflow.js";
 type Workflow = NonNullable<ReturnType<ProjectWorkflowService["get"]>>;
 
 export function registerWorkflowRoutes(app: FastifyInstance, dependencies: {
-  root: string;
   workflow: ProjectWorkflowService;
   ready: Promise<unknown>;
   projects: ProjectStore;
@@ -17,14 +14,14 @@ export function registerWorkflowRoutes(app: FastifyInstance, dependencies: {
   settle: (workflow: Workflow) => Promise<Workflow>;
 }): void {
   const { workflow, ready, projects, conversations, settle } = dependencies;
-  app.get("/api/gate4/research-workflows", async (request, reply) => {
+  app.get("/api/v1/research-workflows", async (request, reply) => {
     const parsed = z.object({ projectId: z.string().min(1).max(120), sessionId: z.string().min(1).max(160).optional() }).safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     const project = projects.getProject(parsed.data.projectId);
     if (!project || project.status === "archived") return reply.code(404).send({ error: "Project not found" });
     await ready; return workflow.list({ projectId: parsed.data.projectId, ...(parsed.data.sessionId ? { sessionId: parsed.data.sessionId } : {}) });
   });
-  app.post("/api/gate4/research-workflows", async (request, reply) => {
+  app.post("/api/v1/research-workflows", async (request, reply) => {
     const parsed = projectWorkflowCreateSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     const project = projects.getProject(parsed.data.projectId); const session = conversations.getChatSession(parsed.data.sessionId);
@@ -51,26 +48,6 @@ export function registerWorkflowRoutes(app: FastifyInstance, dependencies: {
     } catch (error) { return reply.code(error instanceof Error && error.message.includes("not found") ? 404 : 409).send({ error: error instanceof Error ? error.message : String(error) }); }
   };
   for (const name of ["probe", "approve", "reject", "run", "reset", "cancel", "settle"] as const) {
-    app.post(`/api/gate4/research-workflows/:id/${name}`, async (request, reply) => action(request.params, request.body, reply, name));
+    app.post(`/api/v1/research-workflows/:id/${name}`, async (request, reply) => action(request.params, request.body, reply, name));
   }
-
-  app.get("/api/gate4/workflow-artifacts/:workflowId/*", async (request, reply) => {
-    const parsed = z.object({ workflowId: z.string().regex(/^workflow-[0-9a-f-]{36}$/), "*": z.string().min(1) }).safeParse(request.params);
-    if (!parsed.success) return reply.code(400).send({ error: "Invalid workflow Artifact path" });
-    const scope = z.object({ projectId: z.string().min(1).max(120) }).safeParse(request.query);
-    if (!scope.success) return reply.code(400).send({ error: "Workflow Artifact requires projectId" });
-    const current = workflow.get(parsed.data.workflowId);
-    const project = projects.getProject(scope.data.projectId);
-    const session = current ? conversations.getChatSession(current.sessionId) : undefined;
-    if (!current || current.projectId !== scope.data.projectId || !project || project.status === "archived" || !session || session.projectId !== project.id) return reply.code(404).send({ error: "Workflow Artifact not found in project" });
-    const relative = parsed.data["*"];
-    if (relative.includes("\\") || relative.split("/").includes("..")) return reply.code(400).send({ error: "Invalid workflow Artifact path" });
-    const artifactRoot = resolve(dependencies.root, "project-runs", parsed.data.workflowId, "artifacts"); const artifactPath = resolve(artifactRoot, relative);
-    if (!artifactPath.startsWith(`${artifactRoot}${sep}`)) return reply.code(400).send({ error: "Invalid workflow Artifact path" });
-    try {
-      const extension = relative.split(".").at(-1)?.toLowerCase() ?? "";
-      const contentTypes: Record<string, string> = { png: "image/png", csv: "text/csv; charset=utf-8", json: "application/json; charset=utf-8" };
-      return reply.type(contentTypes[extension] ?? "application/octet-stream").send(await readFile(artifactPath));
-    } catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT" ? reply.code(404).send({ error: "Artifact not found" }) : reply.code(500).send({ error: "Artifact read failed" }); }
-  });
 }

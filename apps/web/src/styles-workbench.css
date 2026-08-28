@@ -137,6 +137,25 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .project-workflow-list { display: grid; gap: 14px; }.project-workflow-empty { max-width: 520px; margin: 70px auto; text-align: center; }.project-workflow-empty span { font-size: 40px; color: #5896b9; }.project-workflow-empty h2 { font-size: var(--hf-section); }.project-workflow-empty p { color: var(--hf-muted); font-size: var(--hf-body); line-height: 1.65; }
 .research-workflow-card header small, .research-workflow-card header span, .workflow-scope, .workflow-disclosure, .workflow-approval, .workflow-progress, .workflow-review, .workflow-artifacts, .research-workflow-card footer { font-size: var(--hf-control); }
 
+.attention-view { height: 100%; overflow: auto; padding: clamp(28px, 5vw, 72px); background: #f8fafc; color: #172333; }
+.attention-view > header { display: flex; align-items: flex-end; justify-content: space-between; max-width: 980px; margin: 0 auto 30px; border-bottom: 1px solid #dbe3eb; padding-bottom: 22px; }
+.attention-view > header small { color: #6b8296; letter-spacing: .14em; font-size: var(--hf-caption); }
+.attention-view > header h1 { margin: 7px 0 5px; font: 500 clamp(30px, 4vw, 48px)/1.08 Georgia, "Songti SC", serif; }
+.attention-view > header p { margin: 0; color: #637487; font-size: var(--hf-body); }
+.attention-view > header > span { font: 400 42px/1 Georgia, serif; color: #9aabba; }
+.attention-view > section { max-width: 980px; margin: auto; border-top: 1px solid #dbe3eb; }
+.attention-view article { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 21px 4px; border-bottom: 1px solid #dbe3eb; background: transparent; }
+.attention-view article > i { width: 7px; height: 7px; border-radius: 50%; background: #d19b45; }
+.attention-view article.severity-critical > i { background: #bd624f; }
+.attention-view article small { color: #74889a; font-size: var(--hf-caption); }
+.attention-view article h2 { margin: 3px 0 5px; font-size: var(--hf-title); font-weight: 600; }
+.attention-view article p { margin: 0 0 7px; color: #5f7183; font-size: var(--hf-body); }
+.attention-view article code { color: #8b9aa8; font-size: var(--hf-caption); }
+.attention-view article button { border: 1px solid #b9c8d4; border-radius: 8px; padding: 9px 12px; background: transparent; color: #315c7d; }
+.attention-view article button:hover { border-color: #6699bd; background: #eef6fb; }
+.attention-clear { max-width: 980px; margin: 12vh auto; text-align: center; color: #617689; }
+.attention-clear > span { display: inline-grid; place-items: center; width: 42px; height: 42px; border: 1px solid #9fb8ad; border-radius: 50%; color: #417b66; }
+
 /* Literature workbench: empty search state and adaptive details drawer. */
 .literature-start { min-height: 0; overflow: auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 40px; padding: clamp(34px, 7vw, 90px); background: #fff; }
 .literature-start > section { max-width: 760px; align-self: center; }.literature-start > section > small { color: #3977d8; font-size: var(--hf-caption); }.literature-start h1 { max-width: 680px; margin: 12px 0; font-family: Georgia, "Songti SC", serif; font-size: clamp(30px, 4vw, 50px); line-height: 1.16; }.literature-start > section > p { color: var(--hf-muted); font-size: 16px; line-height: 1.7; }.literature-start > section > div { display: flex; gap: 8px; margin-top: 28px; }.literature-start input { flex: 1; min-width: 0; min-height: 48px; padding: 10px 14px; border: 1px solid #bfcdd2; border-radius: 9px; }.literature-start button { min-height: 48px; padding: 10px 18px; border: 0; border-radius: 9px; color: #fff; background: #3478a7; }.literature-start > aside { align-self: center; border-left: 1px solid var(--hf-line); padding-left: 28px; }.literature-start > aside header { display: flex; justify-content: space-between; margin-bottom: 12px; }.literature-start > aside article { padding: 12px 0; border-bottom: 1px solid var(--hf-line); }.literature-start > aside article small { color: #50816f; font-size: var(--hf-caption); }.literature-start > aside article b { display: block; margin: 5px 0; font-size: var(--hf-control); }.literature-start > aside article p { overflow: hidden; margin: 0; color: var(--hf-muted); font-size: var(--hf-caption); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }

@@ -13,7 +13,7 @@ export function createOceanResearchFixture(projectId = "ocean-heatwave-rg0"): Re
     { id: "assertion-refute", projectId, kind: "EvidenceAssertion", title: "短时事件主要受风强迫控制", status: "accepted", stance: "refutes", confidence: 0.73 },
     { id: "dataset", projectId, kind: "DatasetSnapshot", title: "Argo 2023-07—08 温盐剖面快照", status: "verified", uri: "dataset://argo-rg0", properties: { variables: ["TEMP", "PSAL", "PRES"] } },
     { id: "code", projectId, kind: "ArtifactVersion", title: "混合层深度分析脚本 v1", status: "verified", uri: "artifact://rg0/code-v1" },
-    { id: "run", projectId, kind: "ResearchRun", title: "Argo 层结与热含量计算", status: "succeeded", properties: { environment: "xiling-runner:gate3" } },
+    { id: "run", projectId, kind: "ResearchRun", title: "Argo 层结与热含量计算", status: "succeeded", properties: { environment: "xiling-runner:research-os" } },
     { id: "artifact", projectId, kind: "Artifact", title: "层结—海洋热浪分析结果", status: "available", uri: "artifact://rg0/analysis" },
     { id: "artifact-v1", projectId, kind: "ArtifactVersion", title: "层结—海洋热浪分析结果 v1", status: "available", uri: "artifact://rg0/analysis/v1" },
     { id: "available-event", projectId, kind: "LifecycleEvent", title: "Artifact 校验通过并可用", status: "available" },

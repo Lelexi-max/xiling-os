@@ -5,9 +5,8 @@ import { history } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
 import type {
   EvidenceRecord,
-  Gate4Project,
+  ResearchProject,
   ProjectItem,
-  ProjectResearchWorkflow,
   ResearchGraphProjection,
   ResourceUri,
   WikiPageDetail,
@@ -15,13 +14,14 @@ import type {
   WikiPageSummary,
   WikiSearchResult,
 } from "@xiling/contracts";
+import type { ProjectResearchWorkflow } from "@xiling/domain-ocean";
 import "@milkdown/kit/prose/view/style/prosemirror.css";
 
 type WikiDestination = "project" | "papers";
 type WikiMode = "read" | "edit";
 type Heading = { id: string; label: string; level: number };
 type OverviewData = {
-  project: Gate4Project | null;
+  project: ResearchProject | null;
   items: ProjectItem[];
   evidence: EvidenceRecord[];
   researchGraph: ResearchGraphProjection;
@@ -63,7 +63,7 @@ export function WikiView({ projectId, onNavigate }: { projectId: string; onNavig
   const headings = useMemo(() => page ? extractHeadings(currentMarkdown) : overviewHeadings, [currentMarkdown, page]);
 
   const loadPages = async () => {
-    const next = await jsonRequest<WikiPageSummary[]>(`/api/gate4/wiki/pages?projectId=${encodeURIComponent(projectId)}`);
+    const next = await jsonRequest<WikiPageSummary[]>(`/api/v1/wiki/pages?projectId=${encodeURIComponent(projectId)}`);
     setPages(next);
     return next;
   };
@@ -84,7 +84,7 @@ export function WikiView({ projectId, onNavigate }: { projectId: string; onNavig
 
   const openPage = async (id: string) => {
     try {
-      const detail = await jsonRequest<WikiPageDetail>(`/api/gate4/wiki/pages/${id}`);
+      const detail = await jsonRequest<WikiPageDetail>(`/api/v1/wiki/pages/${id}`);
       setPage(detail);
       setDraftTitle(detail.title);
       setDraftBody(stripLeadingTitle(detail.currentRevision.markdown));
@@ -117,7 +117,7 @@ export function WikiView({ projectId, onNavigate }: { projectId: string; onNavig
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void jsonRequest<WikiSearchResult[]>(`/api/gate4/wiki/search?projectId=${encodeURIComponent(projectId)}&q=${encodeURIComponent(trimmed)}&limit=8`, { signal: controller.signal })
+      void jsonRequest<WikiSearchResult[]>(`/api/v1/wiki/search?projectId=${encodeURIComponent(projectId)}&q=${encodeURIComponent(trimmed)}&limit=8`, { signal: controller.signal })
         .then(setSearchResults)
         .catch((cause) => { if ((cause as Error).name !== "AbortError") setError(cause instanceof Error ? cause.message : String(cause)); });
     }, 180);
@@ -128,7 +128,7 @@ export function WikiView({ projectId, onNavigate }: { projectId: string; onNavig
     if (!page || !draftTitle.trim()) return;
     setStatus("保存中…");
     try {
-      const updated = await jsonRequest<WikiPageDetail>(`/api/gate4/wiki/pages/${page.id}/revisions`, {
+      const updated = await jsonRequest<WikiPageDetail>(`/api/v1/wiki/pages/${page.id}/revisions`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: draftTitle.trim(), markdown: composeMarkdown(draftTitle, draftBody), artifactUris: page.currentRevision.artifactUris }),
@@ -150,7 +150,7 @@ export function WikiView({ projectId, onNavigate }: { projectId: string; onNavig
     const title = newTitle.trim();
     if (!title) return;
     try {
-      const created = await jsonRequest<WikiPageDetail>("/api/gate4/wiki/pages", {
+      const created = await jsonRequest<WikiPageDetail>("/api/v1/wiki/pages", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ projectId, title, markdown: composeMarkdown(title, "从这里记录研究背景、方法、证据与阶段结论。") }),
@@ -168,7 +168,7 @@ export function WikiView({ projectId, onNavigate }: { projectId: string; onNavig
     if (!page || revision.version === page.currentRevision.version) return;
     setStatus("恢复中…");
     try {
-      const updated = await jsonRequest<WikiPageDetail>(`/api/gate4/wiki/pages/${page.id}/revisions/${revision.version}/restore`, { method: "POST" });
+      const updated = await jsonRequest<WikiPageDetail>(`/api/v1/wiki/pages/${page.id}/revisions/${revision.version}/restore`, { method: "POST" });
       setPage(updated);
       setDraftTitle(updated.title);
       setDraftBody(stripLeadingTitle(updated.currentRevision.markdown));
@@ -297,17 +297,12 @@ function prepareReadMarkdown(markdown: string, pages: WikiPageSummary[]): string
   return hydrateWikiLinks(withoutDuplicatedArtifacts, pages);
 }
 function artifactHttpUrl(uri: string, projectId?: string): string | undefined {
-  const connectorFixture = /^artifact:\/\/connector-fixture\/([a-f0-9]{64})$/.exec(uri);
-  if (connectorFixture) return `/api/gate4/connector-artifacts/${connectorFixture[1]}`;
-  const connectorRun = /^artifact:\/\/connector\/([0-9a-f-]{36})\/(.+)$/.exec(uri);
-  if (connectorRun) return `/api/gate4/connector-run-artifacts/${encodeURIComponent(connectorRun[1]!)}/${connectorRun[2]!.split("/").map(encodeURIComponent).join("/")}`;
-  const workflow = /^artifact:\/\/workflow\/(workflow-[0-9a-f-]{36})\/(.+)$/.exec(uri);
-  if (workflow && projectId) return `/api/gate4/workflow-artifacts/${encodeURIComponent(workflow[1]!)}/${workflow[2]!.split("/").map(encodeURIComponent).join("/")}?projectId=${encodeURIComponent(projectId)}`;
+  if (projectId && /^artifact:\/\/sha256\/[a-f0-9]{64}$/.test(uri)) return `/api/v1/artifact-content?projectId=${encodeURIComponent(projectId)}&uri=${encodeURIComponent(uri)}`;
   return undefined;
 }
 function artifactLabel(uri: string): string { const tail = uri.split("/").at(-1) ?? uri; try { return decodeURIComponent(tail); } catch { return tail; } }
 function artifactKind(uri: string): string { const extension = artifactLabel(uri).split(".").at(-1)?.toUpperCase(); return extension && extension.length <= 6 ? extension : "FILE"; }
-function projectStatusLabel(status: Gate4Project["status"] | undefined): string { return status === "active" ? "进行中" : status === "paused" ? "已暂停" : status === "archived" ? "已归档" : "加载中"; }
+function projectStatusLabel(status: ResearchProject["status"] | undefined): string { return status === "active" ? "进行中" : status === "paused" ? "已暂停" : status === "archived" ? "已归档" : "加载中"; }
 function itemKindLabel(kind: ProjectItem["kind"]): string { return kind === "milestone" ? "里程碑" : kind === "experiment" ? "实验" : "任务"; }
 function formatDate(value: string): string { return new Date(value).toLocaleDateString("zh-CN", { year: "numeric", month: "short", day: "numeric" }); }
 function formatDateTime(value: string): string { return new Date(value).toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }); }

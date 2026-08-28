@@ -4,8 +4,8 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-sqlite";
-import type { CanvasBranchContext, ChatMessageRecord, ChatSessionSummary, ContextCapsule, EvidenceRecord, Gate4Project, PaperRecord, ProjectItem, ProjectItemKind, ProjectItemStatus, ProjectStatus, ResourceUri, WikiPageDetail, WikiPageRevision, WikiPageSummary, WikiSearchResult } from "@xiling/contracts";
-import { chatMessages, chatSessionContexts, chatSessions, contextCapsules, evidence, projectItems, projects, wikiPages, wikiRevisions } from "./schema.js";
+import type { CanvasBranchContext, ChatSessionSummary, ContextCapsule, EvidenceRecord, ResearchProject, PaperRecord, ProjectItem, ProjectItemKind, ProjectItemStatus, ProjectStatus, ResourceUri, WikiPageDetail, WikiPageRevision, WikiPageSummary, WikiSearchResult } from "@xiling/contracts";
+import { chatSessionContexts, chatSessions, contextCapsules, evidence, projectItems, projects, wikiPages, wikiRevisions } from "./schema.js";
 import { runKnowledgeMigrations } from "./migrations.js";
 import type { KnowledgeStore, ResearchProjectionOutboxRecord } from "./ports.js";
 
@@ -16,7 +16,7 @@ function slugify(title: string): string {
   return title.trim().toLocaleLowerCase().replace(/\s+/g, "-").replace(/[^\p{L}\p{N}-]+/gu, "").replace(/-+/g, "-") || `page-${randomUUID().slice(0, 8)}`;
 }
 
-function projectFromRow(row: typeof projects.$inferSelect): Gate4Project {
+function projectFromRow(row: typeof projects.$inferSelect): ResearchProject {
   return { ...row, domainIds: JSON.parse(row.domainIds) as string[], status: row.status as ProjectStatus };
 }
 
@@ -43,16 +43,16 @@ export class KnowledgeService implements KnowledgeStore {
 
   close(): void { this.sqlite.close(); }
 
-  listProjects(): Gate4Project[] {
+  listProjects(): ResearchProject[] {
     return this.db.select().from(projects).orderBy(desc(projects.updatedAt)).all().map(projectFromRow);
   }
 
-  getProject(id: string): Gate4Project | undefined {
+  getProject(id: string): ResearchProject | undefined {
     const row = this.db.select().from(projects).where(eq(projects.id, id)).get();
     return row ? projectFromRow(row) : undefined;
   }
 
-  createProject(input: { name: string; description: string; researchQuestion: string; domainIds: string[] }): Gate4Project {
+  createProject(input: { name: string; description: string; researchQuestion: string; domainIds: string[] }): ResearchProject {
     const timestamp = now();
     const value: typeof projects.$inferInsert = { id: randomUUID(), ...input, domainIds: JSON.stringify(input.domainIds), status: "active", createdAt: timestamp, updatedAt: timestamp };
     const project = projectFromRow(value as typeof projects.$inferSelect);
@@ -63,9 +63,9 @@ export class KnowledgeService implements KnowledgeStore {
     return project;
   }
 
-  updateProject(id: string, patch: Partial<Pick<Gate4Project, "name" | "description" | "researchQuestion" | "domainIds" | "status">>): Gate4Project | undefined {
+  updateProject(id: string, patch: Partial<Pick<ResearchProject, "name" | "description" | "researchQuestion" | "domainIds" | "status">>): ResearchProject | undefined {
     const timestamp = now();
-    let project: Gate4Project | undefined;
+    let project: ResearchProject | undefined;
     this.transaction(() => {
       const { domainIds, ...plainPatch } = patch;
       const result = this.db.update(projects).set({ ...plainPatch, ...(domainIds ? { domainIds: JSON.stringify(domainIds) } : {}), updatedAt: timestamp }).where(eq(projects.id, id)).run();
@@ -101,10 +101,8 @@ export class KnowledgeService implements KnowledgeStore {
 
   listChatSessions(projectId: string): ChatSessionSummary[] {
     return this.db.select().from(chatSessions).where(and(eq(chatSessions.projectId, projectId), eq(chatSessions.archived, false))).orderBy(desc(chatSessions.updatedAt)).all().map((session) => {
-      const messages = this.db.select().from(chatMessages).where(eq(chatMessages.sessionId, session.id)).orderBy(asc(chatMessages.createdAt)).all();
-      const last = messages.at(-1);
       const canvasContext = this.getChatSessionContext(session.id);
-      return { id: session.id, projectId: session.projectId, title: session.title, preview: last?.text.slice(0, 120) ?? "", messageCount: messages.length, ...(canvasContext ? { canvasContext } : {}), createdAt: session.createdAt, updatedAt: session.updatedAt };
+      return { id: session.id, projectId: session.projectId, title: session.title, preview: "", messageCount: 0, ...(canvasContext ? { canvasContext } : {}), createdAt: session.createdAt, updatedAt: session.updatedAt };
     });
   }
 
@@ -123,18 +121,6 @@ export class KnowledgeService implements KnowledgeStore {
 
   archiveChatSession(id: string): boolean {
     return this.db.update(chatSessions).set({ archived: true, updatedAt: now() }).where(eq(chatSessions.id, id)).run().changes > 0;
-  }
-
-  listChatMessages(sessionId: string): ChatMessageRecord[] {
-    return this.db.select().from(chatMessages).where(eq(chatMessages.sessionId, sessionId)).orderBy(asc(chatMessages.createdAt)).all().map((message) => ({ ...message, role: message.role as ChatMessageRecord["role"], status: message.status as ChatMessageRecord["status"] }));
-  }
-
-  appendChatMessage(sessionId: string, input: Pick<ChatMessageRecord, "role" | "text" | "status">): ChatMessageRecord {
-    const createdAt = now();
-    const value: typeof chatMessages.$inferInsert = { id: randomUUID(), sessionId, ...input, createdAt };
-    this.db.insert(chatMessages).values(value).run();
-    this.db.update(chatSessions).set({ updatedAt: createdAt }).where(eq(chatSessions.id, sessionId)).run();
-    return { ...value, role: input.role, status: input.status };
   }
 
   getChatSessionContext(sessionId: string): CanvasBranchContext | undefined {
@@ -347,7 +333,7 @@ export class KnowledgeService implements KnowledgeStore {
   private seed(): void {
     if (this.db.select().from(projects).get()) return;
     const timestamp = now();
-    const project: Gate4Project = { id: DEFAULT_PROJECT_ID, name: "西北太平洋海洋热浪", description: "机制与 Argo 观测验证", researchQuestion: "上层海洋层结是否放大了 2023 年海洋热浪？", domainIds: ["general-science", "ocean-climate"], status: "active", createdAt: timestamp, updatedAt: timestamp };
+    const project: ResearchProject = { id: DEFAULT_PROJECT_ID, name: "西北太平洋海洋热浪", description: "机制与 Argo 观测验证", researchQuestion: "上层海洋层结是否放大了 2023 年海洋热浪？", domainIds: ["general-science", "ocean-climate"], status: "active", createdAt: timestamp, updatedAt: timestamp };
     this.transaction(() => {
       this.db.insert(projects).values({ ...project, domainIds: JSON.stringify(project.domainIds) }).run();
       this.enqueueProjection(project.id, project.id, "knowledge.project.upserted", project, timestamp);

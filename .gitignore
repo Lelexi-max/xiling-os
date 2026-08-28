@@ -16,7 +16,7 @@ Desktop.ini
 services/runner/.venv/
 services/runner/output/
 data/
-artifacts/
+/artifacts/
 database/
 cache/
 logs/

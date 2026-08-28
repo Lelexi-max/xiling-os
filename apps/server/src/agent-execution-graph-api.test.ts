@@ -9,7 +9,7 @@ describe("Agent Execution Graph API", () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "xiling-agent-graph-api-"));
     const app = createApp({ dataRoot });
     try {
-      const created = await app.inject({ method: "POST", url: "/api/gate4/chat-sessions", payload: { projectId: "ocean-heatwave", title: "运行图测试" } });
+      const created = await app.inject({ method: "POST", url: "/api/v1/chat-sessions", payload: { projectId: "ocean-heatwave", title: "运行图测试" } });
       expect(created.statusCode).toBe(201);
       const sessionId = created.json().id as string;
       const started = await app.inject({ method: "POST", url: "/api/agent-center/runs", payload: { projectId: "ocean-heatwave", sessionId, prompt: "检查运行图", clientCommandId: "graph-api-1" } });

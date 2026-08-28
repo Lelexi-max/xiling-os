@@ -1,9 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { Gate4Project } from "@xiling/contracts";
+import type { ResearchProject } from "@xiling/contracts";
 
 type WorkspaceState = {
-  projects: Gate4Project[];
-  activeProject?: Gate4Project;
+  projects: ResearchProject[];
+  activeProject?: ResearchProject;
   activeProjectId: string;
   setActiveProjectId: (id: string) => void;
   refreshProjects: (preferredId?: string) => Promise<void>;
@@ -15,7 +15,7 @@ const WorkspaceContext = createContext<WorkspaceState | undefined>(undefined);
 const storageKey = "xiling.activeProjectId";
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [projects, setProjects] = useState<Gate4Project[]>([]);
+  const [projects, setProjects] = useState<ResearchProject[]>([]);
   const [activeProjectId, setActiveProjectIdState] = useState(() => localStorage.getItem(storageKey) ?? "ocean-heatwave");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -28,9 +28,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const refreshProjects = useCallback(async (preferredId?: string) => {
     setLoading(true);
     try {
-      const response = await fetch("/api/gate4/projects");
+      const response = await fetch("/api/v1/projects");
       if (!response.ok) throw new Error(`项目加载失败：${response.status}`);
-      const all = await response.json() as Gate4Project[];
+      const all = await response.json() as ResearchProject[];
       const visible = all.filter((project) => project.status !== "archived");
       setProjects(visible);
       const requested = preferredId ?? activeProjectId;

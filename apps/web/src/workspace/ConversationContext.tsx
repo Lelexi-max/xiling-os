@@ -37,7 +37,7 @@ export function ConversationProvider({ children }: { children: ReactNode }) {
     if (!activeProjectId) return;
     setLoading(true);
     try {
-      const response = await fetch(`/api/gate4/chat-sessions?projectId=${encodeURIComponent(activeProjectId)}`);
+      const response = await fetch(`/api/v1/chat-sessions?projectId=${encodeURIComponent(activeProjectId)}`);
       if (!response.ok) throw new Error(`会话加载失败：${response.status}`);
       const next = await response.json() as ChatSessionSummary[];
       setSessions(next);
@@ -52,7 +52,7 @@ export function ConversationProvider({ children }: { children: ReactNode }) {
   const selectSession = useCallback((id: string) => rememberSelection(activeProjectId, id), [activeProjectId, rememberSelection]);
   const startNewConversation = useCallback(() => rememberSelection(activeProjectId, ""), [activeProjectId, rememberSelection]);
   const createConversation = useCallback(async (firstPrompt: string) => {
-    const response = await fetch("/api/gate4/chat-sessions", {
+    const response = await fetch("/api/v1/chat-sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ projectId: activeProjectId, title: titleFromPrompt(firstPrompt) }),

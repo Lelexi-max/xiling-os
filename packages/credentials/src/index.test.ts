@@ -33,4 +33,10 @@ describe("credential store smoke", () => {
     expect(status.capabilities?.input).toEqual(["text"]);
     expect(JSON.stringify(status)).not.toContain("fixture-key");
   });
+
+  it("rejects unknown provider ids instead of indexing an undefined definition", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xiling-unknown-provider-")); const store = new CredentialStore(root, {}); await store.initialize();
+    expect(() => store.status("unregistered-domain-provider")).toThrow("Unknown credential provider");
+    await expect(store.set("unregistered-domain-provider", { token: "secret" })).rejects.toThrow("Unknown credential provider");
+  });
 });

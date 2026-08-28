@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@xiling/contracts": "workspace:*",
+    "@xiling/domain-ocean": "workspace:*",
     "zod": "4.4.3"
   }
 }

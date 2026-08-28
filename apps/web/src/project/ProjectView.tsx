@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Gate4Project, ProjectItem, ProjectItemKind, ProjectItemStatus } from "@xiling/contracts";
+import type { ResearchProject, ProjectItem, ProjectItemKind, ProjectItemStatus } from "@xiling/contracts";
 import { RecordDetailModal } from "../components/RecordDetailModal.js";
 import { ProjectWorkflowDashboard } from "./ProjectWorkflowDashboard.js";
 
@@ -13,7 +13,7 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function ProjectView({ projectId, projects, onProjectChange, onProjectsChange }: { projectId: string; projects: Gate4Project[]; onProjectChange: (id: string) => void; onProjectsChange: (preferredId?: string) => Promise<void> }) {
+export function ProjectView({ projectId, projects, onProjectChange, onProjectsChange }: { projectId: string; projects: ResearchProject[]; onProjectChange: (id: string) => void; onProjectsChange: (preferredId?: string) => Promise<void> }) {
   const [tab, setTab] = useState<"manage" | "run">("manage");
   const [items, setItems] = useState<ProjectItem[]>([]);
   const [newTitle, setNewTitle] = useState("");
@@ -27,7 +27,7 @@ export function ProjectView({ projectId, projects, onProjectChange, onProjectsCh
   const [expandedItem, setExpandedItem] = useState<ProjectItem>();
 
   const loadItems = useCallback(async () => {
-    if (projectId) setItems(await jsonRequest<ProjectItem[]>(`/api/gate4/project-items?projectId=${encodeURIComponent(projectId)}`));
+    if (projectId) setItems(await jsonRequest<ProjectItem[]>(`/api/v1/project-items?projectId=${encodeURIComponent(projectId)}`));
   }, [projectId]);
   useEffect(() => { void loadItems().catch((cause) => setError(String(cause))); }, [loadItems]);
   useEffect(() => { void jsonRequest<{ domains: ScienceDomainSummary[] }>("/api/science/domains").then((value) => setDomains(value.domains)).catch((cause) => setError(String(cause))); }, []);
@@ -37,15 +37,15 @@ export function ProjectView({ projectId, projects, onProjectChange, onProjectsCh
 
   const createItem = async () => {
     if (!newTitle.trim() || !projectId) return;
-    await jsonRequest<ProjectItem>("/api/gate4/project-items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId, kind: newKind, title: newTitle.trim(), notes: "" }) });
+    await jsonRequest<ProjectItem>("/api/v1/project-items", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId, kind: newKind, title: newTitle.trim(), notes: "" }) });
     setNewTitle(""); await loadItems();
   };
   const updateStatus = async (item: ProjectItem, status: ProjectItemStatus) => {
-    await jsonRequest<ProjectItem>(`/api/gate4/project-items/${item.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status }) }); await loadItems();
+    await jsonRequest<ProjectItem>(`/api/v1/project-items/${item.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status }) }); await loadItems();
   };
   const createProject = async () => {
     if (!projectName.trim() || !question.trim()) return;
-    const project = await jsonRequest<Gate4Project>("/api/gate4/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: projectName.trim(), researchQuestion: question.trim(), description: "个人科学研究项目", domainIds: [domainId] }) });
+    const project = await jsonRequest<ResearchProject>("/api/v1/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: projectName.trim(), researchQuestion: question.trim(), description: "个人科学研究项目", domainIds: [domainId] }) });
     setCreatingProject(false); setProjectName(""); setQuestion(""); onProjectChange(project.id); await onProjectsChange(project.id);
   };
 

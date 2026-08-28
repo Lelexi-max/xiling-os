@@ -8,11 +8,13 @@ const ProjectView = lazy(async () => ({ default: (await import("./project/Projec
 const WikiView = lazy(async () => ({ default: (await import("./wiki/WikiView.js")).WikiView }));
 const SettingsView = lazy(async () => ({ default: (await import("./settings/SettingsView.js")).SettingsView }));
 const ScientificCanvasView = lazy(async () => ({ default: (await import("./canvas/ScientificCanvasView.js")).ScientificCanvasView }));
+const AttentionView = lazy(async () => ({ default: (await import("./attention/AttentionView.js")).AttentionView }));
 
-type View = "chat" | "canvas" | "project" | "wiki" | "papers" | "settings";
+type View = "chat" | "attention" | "canvas" | "project" | "wiki" | "papers" | "settings";
 
 const labels: Record<View, string> = {
   chat: "对话",
+  attention: "需要关注",
   canvas: "科研画布",
   project: "项目",
   wiki: "Wiki",
@@ -22,6 +24,7 @@ const labels: Record<View, string> = {
 
 const icons: Record<View, ReactNode> = {
   chat: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h7A2.5 2.5 0 0 1 16 5.5v4a2.5 2.5 0 0 1-2.5 2.5H9l-3.8 3v-3.3A2.5 2.5 0 0 1 4 9.5z" /></>,
+  attention: <><path d="M10 2.8 17 16H3z"/><path d="M10 7v4m0 2.5v.2"/></>,
   canvas: <><circle cx="5" cy="5" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="10" cy="15" r="2"/><path d="m7 5.2 6 .6M6.2 6.7l2.7 6.5m4.8-5.5-2.6 5.5"/></>,
   project: <><path d="M3 6.5h14v10H3zM3 6.5l3-3h4l2 3" /></>,
   wiki: <><path d="M4 3.5h9a3 3 0 0 1 3 3v10H7a3 3 0 0 1-3-3zM7 6.5h6M7 10h6" /></>,
@@ -87,7 +90,7 @@ function WorkspaceApp() {
           {view === "settings" ? <div className="settings-top-status"><i />本地设置 · 凭据不会回传</div> : <div className="workspace-actions"><span className="save-state">✓ 已保存</span><button onClick={() => setCommandOpen(true)}>⌘K 搜索与跳转</button></div>}
         </header>
         <Suspense fallback={<div className="view-loading">按需加载当前视图…</div>}>
-          {view === "chat" ? <ChatView project={activeProject} /> : view === "canvas" ? <ScientificCanvasView projectId={activeProjectId} onNavigate={setView} /> : view === "project" ? <ProjectView projectId={activeProjectId} projects={projects} onProjectChange={setActiveProjectId} onProjectsChange={refreshProjects} /> : view === "wiki" ? <WikiView projectId={activeProjectId} onNavigate={setView} /> : view === "papers" ? <PaperGraphView projectId={activeProjectId} onNavigate={setView} /> : view === "settings" ? <SettingsView /> : <Placeholder title={labels[view]} />}
+          {view === "chat" ? <ChatView project={activeProject} /> : view === "attention" ? <AttentionView projectId={activeProjectId} onNavigate={setView} /> : view === "canvas" ? <ScientificCanvasView projectId={activeProjectId} onNavigate={setView} /> : view === "project" ? <ProjectView projectId={activeProjectId} projects={projects} onProjectChange={setActiveProjectId} onProjectsChange={refreshProjects} /> : view === "wiki" ? <WikiView projectId={activeProjectId} onNavigate={setView} /> : view === "papers" ? <PaperGraphView projectId={activeProjectId} onNavigate={setView} /> : view === "settings" ? <SettingsView /> : <Placeholder title={labels[view]} />}
         </Suspense>
       </section>
       {commandOpen ? <div className="command-palette" role="dialog" aria-modal="true" aria-label="搜索与跳转"><div><header><input autoFocus placeholder="跳转页面、切换项目或新建对话…" value={commandQuery} onChange={(event) => setCommandQuery(event.target.value)} /><kbd>ESC</kbd></header><section><small>工作区</small>{(Object.keys(labels) as View[]).filter((target) => labels[target].includes(commandQuery.trim()) || !commandQuery.trim()).map((target) => <button key={target} onClick={() => { if (target === "settings") settingsReturnView.current = view === "settings" ? "chat" : view; setView(target); setCommandOpen(false); setCommandQuery(""); }}><svg viewBox="0 0 20 20">{icons[target]}</svg><span>{labels[target]}</span><em>打开</em></button>)}</section><section><small>科研项目</small>{projects.filter((project) => `${project.name} ${project.researchQuestion}`.toLocaleLowerCase().includes(commandQuery.trim().toLocaleLowerCase()) || !commandQuery.trim()).map((project) => <button key={project.id} onClick={() => { setActiveProjectId(project.id); setCommandOpen(false); setCommandQuery(""); }}><span>◎ {project.name}</span><em>{project.id === activeProjectId ? "当前" : "切换"}</em></button>)}</section><footer><button onClick={() => { startNewConversation(); setView("chat"); setCommandOpen(false); }}>＋ 新建研究对话</button></footer></div></div> : null}
@@ -103,5 +106,5 @@ function formatSessionTime(value: string): string {
 }
 
 function Placeholder({ title }: { title: string }) {
-  return <div className="placeholder"><span>Gate 3 纵切</span><h1>{title}</h1><p>该视图将在后续里程碑接入完整领域服务。</p></div>;
+  return <div className="placeholder"><span>RESEARCH WORKSPACE</span><h1>{title}</h1><p>当前领域尚未贡献该工作台模块。</p></div>;
 }

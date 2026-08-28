@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteAgentSessionStore } from "@xiling/agent-harness";
 import { preflightConnector } from "@xiling/connectors";
-import type { OceanSubsetRequest, ProjectResearchWorkflow } from "@xiling/contracts";
+import type { OceanSubsetRequest, ProjectResearchWorkflow } from "@xiling/domain-ocean";
 import { KnowledgeService } from "@xiling/knowledge";
 import { LadybugResearchGraphStore } from "@xiling/research-graph";
 import { afterEach, describe, expect, it } from "vitest";

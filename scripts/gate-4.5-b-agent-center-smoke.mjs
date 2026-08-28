@@ -6,7 +6,7 @@ import { createApp } from "../apps/server/dist/app.js";
 const root = await mkdtemp(join(tmpdir(), "xiling-gate-4.5-b-smoke-"));
 try {
   const app = createApp({ dataRoot: root });
-  const session = await app.inject({ method: "POST", url: "/api/gate4/chat-sessions", payload: { projectId: "ocean-heatwave", title: "Agent Center smoke" } });
+  const session = await app.inject({ method: "POST", url: "/api/v1/chat-sessions", payload: { projectId: "ocean-heatwave", title: "Agent Center smoke" } });
   if (session.statusCode !== 201) throw new Error(`Agent session smoke failed: HTTP ${session.statusCode}`);
   const started = await app.inject({ method: "POST", url: "/api/agent-center/runs", payload: { sessionId: session.json().id, projectId: "ocean-heatwave", prompt: "Gate 4.5-B offline smoke", clientCommandId: "smoke-command" } });
   if (started.statusCode !== 202) throw new Error(`Agent run smoke failed: HTTP ${started.statusCode}`);

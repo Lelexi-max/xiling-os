@@ -52,10 +52,10 @@ export function registerAgentCenterRoutes(app: FastifyInstance, dependencies: Ag
   };
 
   app.get("/api/agent-center/status", async () => ({
-    mode: "gate-4.5-d-primary",
+    mode: "durable-harness-primary",
     sessionFormat: AGENT_SESSION_FORMAT_VERSION,
     recoveredOnStartup: harness.recoveredOnStartup,
-    formalChatMigrated: true,
+    messageSource: "agent-store",
     researchGraphContext: true,
     workflowProjection: "durable-server-owned",
     multiAgent: { enabled: true, maxConcurrency: 3, maxTasksPerDelegation: 6, recursiveDelegation: false },

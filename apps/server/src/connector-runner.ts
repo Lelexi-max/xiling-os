@@ -3,7 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import type { ConnectorMetadataSummary, OceanConnectorId, OceanSubsetRequest, ResourceUri } from "@xiling/contracts";
+import type { ResourceUri } from "@xiling/contracts";
+import type { ConnectorMetadataSummary, OceanConnectorId, OceanSubsetRequest } from "@xiling/domain-ocean";
 import type { ConnectorDownloader, ConnectorMetadataProbe } from "@xiling/connectors";
 
 const executeFile = promisify(execFile);
@@ -51,7 +52,7 @@ export class DockerConnectorRunner implements ConnectorDownloader {
   constructor(
     private readonly runsRoot: string,
     private readonly credentials: CredentialResolver,
-    private readonly image = "xiling-runner:gate4",
+    private readonly image = "xiling-runner:research-os",
   ) {}
 
   async download(request: OceanSubsetRequest, _targetUri: ResourceUri, signal?: AbortSignal) {
@@ -92,7 +93,7 @@ export class DockerConnectorProbe implements ConnectorMetadataProbe {
   constructor(
     private readonly cacheRoot: string,
     private readonly credentials: CredentialResolver,
-    private readonly image = "xiling-runner:gate4",
+    private readonly image = "xiling-runner:research-os",
     private readonly ttlMs = 15 * 60_000,
   ) {}
 

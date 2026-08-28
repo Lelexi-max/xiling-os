@@ -3,9 +3,11 @@
 > 本文档是汐灵 OS 当前产品与软件架构的首要入口（living design document）。
 >
 > - 状态：有效
-> - 最后核对：2026-08-27
-> - 对应版本：Gate 4.5 Agent 中枢、受控 Pi 多智能体编排与 Pi MCP Host 已接入；Research Graph RG-5 本地架构收口、文献证据闭环与旧 Canvas 退役已完成
+> - 最后核对：2026-08-28
+> - 对应版本：Research OS Modernization R0–R7 本地实现；通用执行内核、内容寻址 Artifact、隔离多智能体、上下文质量观测和第二科学领域已接入
 > - 代码事实源：`packages/contracts`、`packages/api-contracts` 与各模块的公开接口
+> - 架构宪法：[科研内核架构宪法](docs/architecture/research-os-constitution.md)
+> - 端到端验收：[黄金科研任务与质量基线](docs/quality/golden-research-tasks.md)
 
 ## 1. 产品目标
 
@@ -110,15 +112,22 @@ apps/
         ├── workspace/           # Project、事项、Chat 历史、Wiki
         ├── settings/            # 凭据状态、模型路由、自定义 Provider
         ├── mcp/                 # MCP 配置、密钥状态、连通性测试
-        └── agent-center/        # 正式 command/snapshot/event/source API
+        ├── agent-center/        # 正式 command/snapshot/event/source API
+        ├── artifacts/           # 内容寻址 Artifact API
+        ├── attention/           # 审批、失败、证据缺口与提案聚合
+        └── tabular/             # 第二领域的通用 Execution 纵向切片
 packages/
-├── contracts/                   # 领域 TypeScript 类型事实源
+├── contracts/                   # 领域中立的 TypeScript 核心类型
 ├── api-contracts/               # 前后端共享 Zod 运行时契约
+├── artifacts/                   # SHA-256 blob + 项目隔离元数据 Registry
+├── execution/                   # 计划、审批、物化、幂等与 Runner port
 ├── context/                     # 投影、Capsule、组装、缓存与 token 估算
 ├── pi-runtime/                  # Pi SDK 适配、模型路由、Skill、MCP Host、TokenLedger
 ├── agent-harness/               # Pi 无关的耐久 Agent 运行中枢
 ├── multi-agent/                 # Pi 无关的角色、TaskPacket、调度与 Handoff
 ├── science-domains/             # 科学领域 Manifest、注册与项目级组合
+├── domain-ocean/                # 海洋/气候类型与领域包
+├── domain-tabular/              # 表格实验参考领域、导入器与 Recipe
 ├── research-graph/              # 科研实体、关系 Schema、LadybugDB 适配器
 ├── knowledge/                   # Knowledge ports、SQLite 适配与迁移
 ├── literature/                  # 文献 Provider、缓存和图算法
@@ -143,7 +152,7 @@ docs/adr/                        # 已接受或被替代的架构决策
 
 ## 5. 核心领域对象与数据所有权
 
-`packages/contracts/src/index.ts` 是字段和联合类型的唯一事实源。本文只记录所有权，不复制完整接口。
+`packages/contracts/src/index.ts` 是领域中立核心类型事实源；学科类型由对应 `domain-*` 包拥有。本文只记录所有权，不复制完整接口。
 
 | 对象 | 当前所有者 | 持久化 | 关键约束 |
 |---|---|---|---|
@@ -161,7 +170,8 @@ docs/adr/                        # 已接受或被替代的架构决策
 | Paper / DiscoveryGraph | Literature | Provider cache | 搜索结果是临时图；收藏、标注或提升证据后才进入 Research Graph |
 | ConnectorJob | Connectors | JSON repository | 未审批不得下载；计划与来源哈希绑定 |
 | ProjectResearchWorkflow | Workflow | 独立 SQLite + outbox | 新科研闭环的唯一状态机；状态和投影事件同事务 |
-| Artifact payload / RO-Crate | Runner / Artifact storage | 文件系统 | 大 payload 不进入数据库或模型上下文；版本和生命周期进入 Research Graph |
+| Artifact payload / RO-Crate | Artifact Registry | SHA-256 blob + SQLite metadata | 正式 URI 为 `artifact://sha256/*`；大 payload 不进入数据库或模型上下文 |
+| ExecutionPlan / Receipt / Record | Execution | SQLite + Runner port | 审批绑定代码、参数、环境、资源、网络和输入选择；幂等键不得指向不同规范 |
 | Credential | Credentials | 加密文件 | 密钥不回传 UI、不进入日志/上下文 |
 | TokenLedger | Pi Runtime | JSONL | 用于观测，不作为正常任务硬限额 |
 | McpServerSettings | MCP Settings + Credentials | JSON + 加密凭据文件 | Server 配置不含密钥；完整工具目录留在隔离 Host |
@@ -245,6 +255,8 @@ draft → probing → pending_approval → approved
 
 旧 Gate 3 路由、聚合包与演示界面已经删除；正式科研闭环只经 Project Workflow、Research Graph 与 Artifact Viewer。
 
+跨领域计算语义由 `@xiling/execution` 统一：Plan 在审批前固定代码快照、参数、随机种子、环境、资源和网络；输入物化后形成带内容哈希的 Spec；Coordinator 校验 Approval Receipt、幂等收据、超时和取消。海洋 Workflow 是现有领域适配器，表格实验纵向切片已经直接使用通用 ExecutionCoordinator；新增领域不得复制执行协调器。
+
 ### 6.3 两种画布与三类图
 
 系统不再让一个 Canvas 同时承担 Agent 运行监控和科研事实存储：
@@ -316,6 +328,7 @@ Wiki 的目的不是独立笔记编辑器，而是项目的百科入口：用户
 - 凭据通过受控通道注入单次运行，不进入 argv、Artifact、计划 JSON 或模型上下文。
 - MCP Bearer Token 只在隔离 Host 配置时读取，不回传 Web；默认 Server 工具调用需审批。
 - 下载审批锁定请求哈希、元数据来源哈希、变量、区域、时间、深度、体积和目标。
+- 通用执行审批锁定代码快照、参数、随机种子、环境 digest、资源和网络策略；输入物化后记录内容哈希。
 - 取消使用应用 cancellation token、Pi `abort()`、Jupyter interrupt 或 Docker stop/kill 升级路径，不依赖 POSIX 信号语义。
 - 受管 Artifact 读取必须校验 URI、扩展名、路径穿越和最大读取量。
 
@@ -377,7 +390,7 @@ Agent SQLite、Knowledge SQLite、Workflow SQLite、Scientific Canvas Layout SQL
 
 1. 先复用 `general-science` 的证据、溯源、文献、Artifact、复现和审查对象，不复制科研内核。
 2. 在 `ScienceDomainManifest` 声明提示片段、能力元数据、角色、连接器、Artifact 类型和 schema namespace。
-3. 有副作用的工具必须在 Server 组合根显式注册 adapter，并沿用审批与 capability token；Manifest 不能携带任意执行代码。
+3. 在 `apps/server/src/installed-domains.ts` 注册安装项；有副作用的工具必须显式注册 adapter，并沿用审批与 capability token；Manifest 不能携带任意执行代码。
 4. 领域依赖进入独立 Runner 环境，不进入 Agent 核心或 Node Server 常驻上下文。
 5. 未选择该领域的项目不得看到其工具、角色、Skill 正文或凭据。
 6. 按 [科学领域扩展架构](docs/architecture/science-domains.md) 提供离线 fixture、smoke、许可证和 Windows/WSL2 验证。
@@ -453,6 +466,8 @@ pnpm compliance    # 依赖许可证检查
 - 改变 Windows 部署和数据目录策略；
 - 接受、替代或废弃架构 ADR。
 
+R0–R8 现代化开发同时受[科研内核架构宪法](docs/architecture/research-os-constitution.md)约束。任何实现若违反三图分离、单一事实源、Artifact 内容寻址、领域中立、Pi 单一边界或按需上下文，不得以“先完成再清理”为由合并。
+
 维护方法：
 
 1. 本文记录当前有效设计，不保留长篇争论过程。
@@ -480,6 +495,10 @@ pnpm compliance    # 依赖许可证检查
 - [ADR 0020：上下文风险加固](docs/adr/0020-context-risk-hardening.md)
 - [ADR 0021：模块化单体与版本化存储](docs/adr/0021-modular-monolith-and-versioned-storage.md)
 - [ADR 0022：研究 Agent Harness 与持久会话中枢](docs/adr/0022-research-agent-harness.md)
+- [ADR 0033：通用科研 OS 受约束现代化 Gate](docs/adr/0033-research-os-modernization-gates.md)
+- [ADR 0034：统一内容寻址 Artifact Registry](docs/adr/0034-content-addressed-artifact-registry.md)
+- [ADR 0035：通用执行内核与领域组合边界](docs/adr/0035-generic-execution-and-domain-composition.md)
+- [ADR 0036：隔离子智能体与结构化 Handoff](docs/adr/0036-isolated-multi-agent-handoffs.md)
 - [Gate 4.5：Agent 中枢架构纠偏](docs/gate-4.5-agent-center-correction.md)
 - [架构现代化计划](docs/architecture/modernization-plan.md)
 - [开源复用与许可证矩阵](docs/oss-evaluation.md)
@@ -488,6 +507,10 @@ pnpm compliance    # 依赖许可证检查
 
 ## 17. 变更记录
 
+- **2026-08-28**：进入 Research OS Modernization R0/R1：建立科研内核架构宪法、黄金科研任务和确定性离线门禁；正式 Workspace API 切换为 `/api/v1`，项目契约改名为 `ResearchProject`；删除 Gate 3 Snapshot、Knowledge `chat_messages`、旧消息回退/导入和 Gate 4.5-C 迁移备份路径，Chat 消息只由 Agent Store 持有。
+- **2026-08-28**：完成 R2 Artifact 基础：新增独立内容寻址 Registry、项目级元数据和生命周期；Workflow 的 Dataset、分析输出和 RO-Crate 在提交前统一注册为 `artifact://sha256/...`，Web/API/Agent 不再读取 Workflow 临时目录。
+- **2026-08-28**：完成 R3–R7 本地架构切片：新增通用 Execution Plan/Spec/Approval/Receipt 与 SQLite 幂等协调；上下文 trace 记录 token 组成、来源覆盖和历史去重；盲审/执行子智能体改为严格 ContextManifest 与 JSON Handoff；新增“需要关注”视图；以表格实验领域验证核心不依赖海洋类型。确定性离线门禁现为 17 个包、33 个测试文件、144 项测试。
+- **2026-08-28**：补齐 R8 的 macOS 容器部分：Runner 从固定 Python 基础镜像构建，基础分析、Argo 科研闭环与四连接器适配器均在 `--network none` 下通过；真实 Windows 11/WSL2、签名介质和真实科研试用仍保持发布阻塞，未以本地结果冒充完成。
 - **2026-08-27**：Agent 运行图改为 Flowith 式低密度对话画布：默认当前 Session，每轮只显示研究指令与关键回答，执行细节折叠；新增沿节点继续、组合引用、祖先路径聚焦、自由拖动、项目全景与画布内 Composer。
 - **2026-08-27**：完成科研真实性与人机功效纠偏：Claim/ClaimRevision 采用待审提案写入；Evidence 保存精确摘录、定位、局限并以 `ASSERTS` 指向具体主张版本；Context 新增按需 `SourceContentResolver`；项目运行改读正式 Workflow、Chat 改读真实 Artifact；科研画布增加一跳聚焦、关系筛选和来源跳转；删除旧 Gate 3 路由、Web 视图、聚合包和 Server 依赖。
 - **2026-08-27**：完成 RG-5 本地收口：旧 Canvas 类型化文档契约和测试一并撤下；Wiki、Chat、文献工作台与 Scientific Canvas 只经 Research Graph/Agent Store/Knowledge 窄边界协作；127 项测试、完整 smoke、生产构建与 4317/4318 浏览器验收通过。真实 Windows 11/WSL2、签名安装介质和真实科研试用继续作为发布门禁。

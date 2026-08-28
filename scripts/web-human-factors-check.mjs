@@ -17,7 +17,7 @@ const checks = [
   [agentFlow.includes("沿节点继续") && agentFlow.includes("组合引用") && agentFlow.includes("unstable_useComposerInput"), "Agent flow must support follow-up and multi-node quote interaction through the shared Composer"],
   [canvas.includes("nodesDraggable") && canvas.includes("panOnScroll") && canvas.includes("聚焦 1 跳"), "Scientific Canvas must support drag, vertical panning and one-hop focus"],
   [canvas.includes("relationFilter") && canvas.includes("全部关系"), "Scientific Canvas relation legend must be interactive"],
-  [!papers.includes("/api/gate4/literature/demo"), "Literature workbench must not auto-load the fixture graph"],
+  [!papers.includes("/api/v1/literature/demo"), "Literature workbench must not auto-load the fixture graph"],
   [app.includes("command-palette") && styles.includes(":focus-visible"), "global navigation must retain keyboard command and focus affordances"],
   [!app.includes("ResearchView") && !chat.includes("mhw_mld"), "retired demo UI must not return"],
   [styles.includes("@media (max-width: 900px)") && styles.includes("prefers-reduced-motion"), "responsive and reduced-motion rules are required"],

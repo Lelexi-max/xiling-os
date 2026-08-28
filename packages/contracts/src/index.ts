@@ -3,6 +3,25 @@ export type ResourceUri =
   | `artifact://${string}`
   | `dataset://${string}`;
 
+export type ArtifactLifecycle = "staging" | "available" | "quarantined" | "archived";
+
+export interface ArtifactRecord {
+  id: string;
+  projectId: string;
+  uri: `artifact://sha256/${string}`;
+  sha256: string;
+  bytes: number;
+  mimeType: string;
+  name: string;
+  /** Core names are generic; domain packages may use a namespaced kind. */
+  kind: string;
+  lifecycle: ArtifactLifecycle;
+  producerRunId?: string;
+  sourceUri?: ResourceUri | string;
+  createdAt: string;
+  verifiedAt?: string;
+}
+
 export type ResearchEntityKind =
   | "Project"
   | "ResearchQuestion"
@@ -284,6 +303,9 @@ export interface ContextAssemblyTrace {
   availableInputTokens: number;
   cache: "hit" | "miss";
   degradations: string[];
+  tokenComposition: { fixed: number; toolSchemas: number; skills: number; research: number; history: number };
+  sourceCoverage: { exactBlockCount: number; locatorRequiredCount: number; locatedCount: number; ratio: number };
+  deduplicatedHistoryCount: number;
 }
 
 export interface TokenLedgerEntry {
@@ -305,6 +327,20 @@ export interface TokenLedgerEntry {
   activatedCapabilityCount?: number;
   activatedSkillCount?: number;
   omittedHistoryCount?: number;
+  contextSourceCoverage?: number;
+  contextDuplicateHistoryCount?: number;
+  createdAt: string;
+}
+
+export interface AttentionItem {
+  id: string;
+  projectId: string;
+  kind: "approval" | "failed-run" | "review" | "evidence-gap" | "proposal";
+  severity: "info" | "warning" | "critical";
+  title: string;
+  summary: string;
+  targetView: "chat" | "canvas" | "project" | "wiki" | "papers";
+  sourceId: string;
   createdAt: string;
 }
 
@@ -374,37 +410,6 @@ export interface ApprovalRequest {
   expiresAt: string;
 }
 
-export interface DatasetMetadata {
-  uri: ResourceUri;
-  title: string;
-  format: "NetCDF" | "GRIB" | "Zarr" | "CSV";
-  variables: Array<{ name: string; units: string; dimensions: string[] }>;
-  bounds: {
-    west: number;
-    east: number;
-    south: number;
-    north: number;
-    minDepth: number;
-    maxDepth: number;
-    start: string;
-    end: string;
-  };
-  byteSize: number;
-  sha256: string;
-}
-
-export interface DatasetSlicePlan {
-  id: string;
-  datasetUri: ResourceUri;
-  variables: string[];
-  region: { west: number; east: number; south: number; north: number };
-  depth: { min: number; max: number };
-  time: { start: string; end: string };
-  estimatedBytes: number;
-  targetUri: ResourceUri;
-  planHash: string;
-}
-
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired";
 
 export interface ResearchApproval {
@@ -443,122 +448,6 @@ export interface WikiRevision {
   markdown: string;
   artifactUris: ResourceUri[];
   createdAt: string;
-}
-
-export interface Gate3ProjectSnapshot {
-  projectId: string;
-  researchQuestion: string;
-  dataset?: DatasetMetadata;
-  plan?: DatasetSlicePlan;
-  approval?: ResearchApproval;
-  run?: ResearchRun;
-  review?: ReviewerReport;
-  canvasNodes: CanvasNode[];
-  canvasEdges: CanvasEdge[];
-  wikiRevisions: WikiRevision[];
-  updatedAt: string;
-}
-
-export type OceanConnectorId = "erddap" | "argo-gdac" | "copernicus-marine" | "nasa-harmony";
-
-export interface OceanSubsetRequest {
-  connectorId: OceanConnectorId;
-  datasetId: string;
-  variables: string[];
-  region: { west: number; east: number; south: number; north: number };
-  depth?: { min: number; max: number };
-  time: { start: string; end: string };
-  outputFormat: "NetCDF" | "Zarr" | "CSV";
-  expectedShape?: number[];
-  bytesPerValue?: number;
-}
-
-export interface ConnectorDescriptor {
-  id: OceanConnectorId;
-  title: string;
-  officialClient: string;
-  authentication: "none" | "account" | "earthdata";
-  capabilities: string[];
-  documentationUrl: string;
-}
-
-export interface ConfiguredConnectorDescriptor extends ConnectorDescriptor {
-  credentialConfigured: boolean;
-  credentialSource: "environment" | "local" | "none";
-}
-
-export interface ConnectorPreflight {
-  requestHash: string;
-  connector: ConnectorDescriptor;
-  status: "ready" | "metadata_required" | "credentials_required";
-  metadataProbe: { method: "GET" | "POST" | "CLI"; endpoint: string; argv?: string[] };
-  estimatedBytes?: number;
-  targetUri: ResourceUri;
-  approvalRisks: ApprovalRisk[];
-  disclosure: string[];
-}
-
-export interface ConnectorMetadataSummary {
-  selectedShape: number[];
-  bytesPerValue: number;
-  variables: Array<{ name: string; units: string }>;
-  estimateKind: "exact" | "estimated" | "upper_bound" | "unknown";
-  estimatedBytes?: number;
-  estimationMethod: string;
-  sourceHash: string;
-  fetchedAt: string;
-  source: "live" | "cache" | "fixture";
-  provider: OceanConnectorId;
-}
-
-export interface ConnectorDownloadJob {
-  id: string;
-  request: OceanSubsetRequest;
-  preflight: ConnectorPreflight;
-  status: "pending_approval" | "approved" | "rejected" | "downloading" | "completed" | "failed" | "cancelled";
-  createdAt: string;
-  decidedAt?: string;
-  failure?: string;
-  artifact?: { uri: ResourceUri; bytes: number; sha256: string };
-  executionMode: "fixture" | "live";
-}
-
-export type ProjectWorkflowStatus =
-  | "draft"
-  | "probing"
-  | "pending_approval"
-  | "approved"
-  | "downloading"
-  | "analyzing"
-  | "completed"
-  | "rejected"
-  | "failed"
-  | "cancelled";
-
-export interface ProjectResearchWorkflow {
-  id: string;
-  projectId: string;
-  sessionId: string;
-  sourceCallId: string;
-  sourceRunId?: string;
-  sourceProjectionKey?: string;
-  sourceEventSequence?: number;
-  sourceOperationId?: string;
-  sourceRequestHash?: string;
-  requestHash?: string;
-  approvedRequestHash?: string;
-  request: OceanSubsetRequest;
-  preflight: ConnectorPreflight;
-  status: ProjectWorkflowStatus;
-  metadata?: ConnectorMetadataSummary;
-  connectorJobId?: string;
-  datasetArtifact?: { uri: ResourceUri; bytes: number; sha256: string };
-  run?: ResearchRun;
-  review?: ReviewerReport;
-  error?: string;
-  settledAt?: string;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface PaperRecord {
@@ -610,7 +499,7 @@ export type ProjectStatus = "active" | "paused" | "archived";
 export type ProjectItemKind = "milestone" | "task" | "experiment";
 export type ProjectItemStatus = "backlog" | "ready" | "running" | "blocked" | "done";
 
-export interface Gate4Project {
+export interface ResearchProject {
   id: string;
   name: string;
   description: string;
@@ -711,7 +600,7 @@ export interface EvidenceRecord {
 }
 
 export type BuiltinModelProviderId = "openai" | "anthropic" | "google" | "openrouter" | "deepseek" | "xai" | "mistral" | "moonshotai" | "zai" | "groq" | "custom";
-export type CredentialProviderId = BuiltinModelProviderId | "semantic-scholar" | "openalex" | "copernicus-marine" | "nasa-earthdata";
+export type CredentialProviderId = string;
 export type ModelModality = "text" | "image" | "audio" | "video";
 
 export interface ModelProviderCapabilities {
@@ -791,9 +680,7 @@ export type AgentStreamEvent =
   | { type: "tool.started"; toolName: string; callId: string; arguments?: unknown }
   | { type: "tool.finished"; toolName: string; callId: string; artifactUri?: ResourceUri; details?: unknown }
   | { type: "tool.failed"; toolName: string; callId: string; message: string; details?: unknown }
-  | { type: "workflow.projected"; projector: "ocean-workflow-draft-v1"; projectionKey: string; workflowId: string; projectId: string; sessionId: string; runId: string; sourceCallId: string; sourceEventSequence: number; sourceOperationId?: string; requestHash: string; workflowStatus: "draft"; approvalRequired: true }
-  | { type: "workflow.projection.failed"; projector: "ocean-workflow-draft-v1"; projectionKey: string; projectId: string; sessionId: string; runId: string; sourceCallId: string; sourceEventSequence: number; sourceOperationId?: string; retryable: boolean; message: string }
-  | { type: "workflow.projected"; projector: "ocean-workflow-draft-v1"; projectionKey: string; workflowId: string; projectId: string; sessionId: string; runId: string; sourceCallId: string; sourceEventSequence: number; sourceOperationId?: string; requestHash: string; workflowStatus: "draft"; approvalRequired: true }
-  | { type: "workflow.projection.failed"; projector: "ocean-workflow-draft-v1"; projectionKey: string; projectId: string; sessionId: string; runId: string; sourceCallId: string; sourceEventSequence: number; sourceOperationId?: string; retryable: boolean; message: string }
+  | { type: "workflow.projected"; projector: string; projectionKey: string; workflowId: string; projectId: string; sessionId: string; runId: string; sourceCallId: string; sourceEventSequence: number; sourceOperationId?: string; requestHash: string; workflowStatus: string; approvalRequired: true }
+  | { type: "workflow.projection.failed"; projector: string; projectionKey: string; projectId: string; sessionId: string; runId: string; sourceCallId: string; sourceEventSequence: number; sourceOperationId?: string; retryable: boolean; message: string }
   | { type: "session.finished"; sessionId: string; stopReason: string }
   | { type: "session.error"; sessionId: string; message: string };

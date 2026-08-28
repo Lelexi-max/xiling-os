@@ -236,6 +236,7 @@ export interface ContextNodeContent {
   body: string;
   sourceLabel?: string;
   sourceLocator?: string;
+  sourceKind?: "primary-excerpt" | "user-annotation" | "provider-abstract" | "durable-record" | "structured-summary";
 }
 
 export interface ContextHistoryMessage {
@@ -329,6 +330,9 @@ export function assembleContext(input: ContextAssemblyInput): ContextAssemblyRes
     ...(omittedHistoryCount ? [`模型窗口不足以容纳 ${omittedHistoryCount} 条较早的补充会话记录；这些记录未被静默裁切，可通过切换分支或更长上下文模型重新装载。`] : []),
   ];
   const historyTokens = history.reduce((total, message) => total + estimateContextTokens(message.text) + 8, 0);
+  const exactNodes = [...exactIds].map((id) => input.nodes.get(id)).filter((node): node is ContextNodeContent => Boolean(node));
+  const locatorRequired = exactNodes.filter((node) => node.sourceKind !== undefined && node.sourceKind !== "structured-summary");
+  const locatedCount = locatorRequired.filter((node) => Boolean(node.sourceLocator)).length;
   return {
     canvasText,
     history,
@@ -344,6 +348,9 @@ export function assembleContext(input: ContextAssemblyInput): ContextAssemblyRes
       availableInputTokens,
       cache: input.cache ?? "miss",
       degradations,
+      tokenComposition: { fixed: input.fixedPromptTokens, toolSchemas: input.toolSchemaTokens, skills: input.skillTokens, research: essentialTokens, history: historyTokens },
+      sourceCoverage: { exactBlockCount: exactNodes.length, locatorRequiredCount: locatorRequired.length, locatedCount, ratio: locatorRequired.length ? locatedCount / locatorRequired.length : 1 },
+      deduplicatedHistoryCount: normalized.mergedCount,
     },
   };
 }
@@ -353,20 +360,22 @@ export function normalizeContextHistory(history: ContextHistoryMessage[]): Conte
   return normalizeContextHistoryWithStats(history).messages;
 }
 
-function normalizeContextHistoryWithStats(history: ContextHistoryMessage[]): { messages: ContextHistoryMessage[]; droppedCount: number } {
+function normalizeContextHistoryWithStats(history: ContextHistoryMessage[]): { messages: ContextHistoryMessage[]; droppedCount: number; mergedCount: number } {
   const merged: Array<{ message: ContextHistoryMessage; sourceCount: number }> = [];
   let droppedCount = 0;
+  let mergedCount = 0;
   for (const message of history) {
     if (!message.text.trim()) { droppedCount += 1; continue; }
     const previous = merged.at(-1);
     if (previous?.message.role === message.role) {
+      mergedCount += 1;
       merged[merged.length - 1] = { message: { ...message, id: `${previous.message.id}+${message.id}`, text: `${previous.message.text}\n\n${message.text}`, timestamp: Math.max(previous.message.timestamp, message.timestamp) }, sourceCount: previous.sourceCount + 1 };
     } else merged.push({ message, sourceCount: 1 });
   }
   while (merged[0]?.message.role === "assistant") droppedCount += merged.shift()!.sourceCount;
   while (merged.at(-1)?.message.role === "user") droppedCount += merged.pop()!.sourceCount;
   if (merged.length % 2 !== 0) droppedCount += merged.pop()!.sourceCount;
-  return { messages: merged.map((item) => item.message), droppedCount };
+  return { messages: merged.map((item) => item.message), droppedCount, mergedCount };
 }
 
 export class ContextAssemblyCache {
