@@ -396,9 +396,9 @@ export function createApp(options: { dataRoot?: string; webRoot?: string; litera
             const deliveredEvent = event.type === "session.error" ? { ...event, message: humanizeModelFailure(event.message) } : event;
             await listener(deliveredEvent);
             if (event.type !== "tool.finished") return;
-            const sourceEvent = agentSessionStore.listEvents(runId).at(-1);
+            const sourceEvent = agentSessionStore.lastEvent(runId);
             if (!sourceEvent || sourceEvent.type !== "tool.finished") return;
-            const operation = agentSessionStore.snapshot(runId).operations.find((item) => item.callId === event.callId);
+            const operation = agentSessionStore.findOperationByCallId(runId, event.callId);
             const projectionEvent = await projectAgentWorkflowDraft({
               event,
               projectId: activeProject.id,

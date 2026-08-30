@@ -73,10 +73,11 @@ export function registerWorkspaceRoutes(app: FastifyInstance, { knowledge, agent
   app.get("/api/v1/chat-sessions", async (request, reply) => {
     const parsed = projectIdQuerySchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-    return knowledge.listChatSessions(parsed.data.projectId).map((session) => {
-      const entries = agentSessions.listSessionEntries(session.id).filter((entry) => entry.role === "user" || entry.role === "assistant");
-      const last = entries.at(-1);
-      return { ...session, preview: last?.text.slice(0, 120) ?? "", messageCount: entries.length, updatedAt: last?.createdAt ?? session.updatedAt };
+    const sessions = knowledge.listChatSessions(parsed.data.projectId);
+    const summaries = agentSessions.chatSessionEntrySummaries(sessions.map(({ id }) => id));
+    return sessions.map((session) => {
+      const summary = summaries.get(session.id);
+      return { ...session, ...(summary ? { preview: summary.preview, messageCount: summary.messageCount, updatedAt: summary.lastEntryAt } : { preview: "", messageCount: 0 }) };
     }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   });
   app.post("/api/v1/chat-sessions", async (request, reply) => {

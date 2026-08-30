@@ -563,6 +563,17 @@ export class SqliteAgentSessionStore {
     return rows.map((row) => ({ sessionId: row.session_id, runId: row.run_id, sequence: row.sequence, type: row.type, payload: JSON.parse(row.payload_json) as unknown, createdAt: row.created_at }));
   }
 
+  lastEvent(runId: string): AgentRunEvent | undefined {
+    const row = this.sqlite.prepare("SELECT session_id, run_id, sequence, type, payload_json, created_at FROM agent_events WHERE run_id = ? ORDER BY sequence DESC LIMIT 1").get(runId) as { session_id: string; run_id: string; sequence: number; type: string; payload_json: string; created_at: string } | undefined;
+    return row ? { sessionId: row.session_id, runId: row.run_id, sequence: row.sequence, type: row.type, payload: JSON.parse(row.payload_json) as unknown, createdAt: row.created_at } : undefined;
+  }
+
+  findOperationByCallId(runId: string, callId: string): AgentOperationRecord | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM agent_operations WHERE run_id = ? AND call_id = ? ORDER BY sequence DESC LIMIT 1").get(runId, callId) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return { id: row.id as string, runId: row.run_id as string, sequence: row.sequence as number, kind: row.kind as AgentOperationRecord["kind"], status: row.status as AgentOperationStatus, name: row.name as string, ...(row.call_id ? { callId: row.call_id as string } : {}), ...(row.request_json ? { request: parseJson(row.request_json as string) } : {}), ...(row.result_json ? { result: parseJson(row.result_json as string) } : {}), ...(row.error ? { error: row.error as string } : {}), startedAt: row.started_at as string, ...(row.finished_at ? { finishedAt: row.finished_at as string } : {}) };
+  }
+
   listEventsByType(types: string[]): AgentRunEvent[] {
     if (!types.length) return [];
     const placeholders = types.map(() => "?").join(", ");
@@ -573,6 +584,13 @@ export class SqliteAgentSessionStore {
   listSessionEntries(sessionId: string): AgentSessionEntry[] {
     const rows = this.sqlite.prepare("SELECT id, session_id, run_id, sequence, kind, role, text, metadata_json, created_at FROM agent_entries WHERE session_id = ? ORDER BY sequence").all(sessionId) as Array<{ id: string; session_id: string; run_id: string; sequence: number; kind: AgentEntryKind; role: AgentSessionEntry["role"] | null; text: string; metadata_json: string | null; created_at: string }>;
     return rows.map((row) => ({ id: row.id, sessionId: row.session_id, runId: row.run_id, sequence: row.sequence, kind: row.kind, ...(row.role ? { role: row.role } : {}), text: row.text, ...(row.metadata_json ? { metadata: parseJson(row.metadata_json) } : {}), createdAt: row.created_at }));
+  }
+
+  chatSessionEntrySummaries(sessionIds: string[]): Map<string, { preview: string; messageCount: number; lastEntryAt: string }> {
+    if (!sessionIds.length) return new Map();
+    const placeholders = sessionIds.map(() => "?").join(", ");
+    const rows = this.sqlite.prepare(`WITH ranked AS (SELECT session_id, text, created_at, ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY sequence DESC) AS rn, COUNT(*) OVER (PARTITION BY session_id) AS message_count FROM agent_entries WHERE role IN ('user', 'assistant') AND session_id IN (${placeholders})) SELECT session_id, text, created_at, message_count FROM ranked WHERE rn = 1`).all(...sessionIds) as Array<{ session_id: string; text: string; created_at: string; message_count: number }>;
+    return new Map(rows.map((row) => [row.session_id, { preview: row.text.slice(0, 120), messageCount: row.message_count, lastEntryAt: row.created_at }]));
   }
 
   getEntry(id: string): AgentSessionEntry | undefined {
