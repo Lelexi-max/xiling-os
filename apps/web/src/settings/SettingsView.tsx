@@ -97,12 +97,24 @@ export function SettingsView() {
   const testConnection = async (provider: CredentialProviderStatus) => {
     setBusy(provider.id); setMessage(`${provider.title} 正在执行最短文字连通测试…`);
     const candidateModel = modelProvider === provider.id && modelId.trim() ? modelId.trim() : undefined;
+    const runTest = (payload: Record<string, string>) => apiJson<ProviderConnectionTestResult>(`/api/settings/providers/${provider.id}/test`, jsonInit("POST", payload));
     try {
-      const body = await apiJson<ProviderConnectionTestResult>(`/api/settings/providers/${provider.id}/test`, jsonInit("POST", candidateModel ? { modelId: candidateModel } : {}));
+      const body = await runTest(candidateModel ? { modelId: candidateModel } : {});
       setTestResults((current) => ({ ...current, [provider.id]: body })); setMessage(`${provider.title} 连接成功，延迟 ${body.latencyMs} ms。`);
     } catch (error) {
       const body = error instanceof ApiError ? error.body as { message?: string } : undefined;
-      setMessage(`${provider.title} 连接失败：${body?.message ?? "请检查密钥、Base URL 和模型 ID"}`);
+      const detail = body?.message ?? "请检查密钥、Base URL 和模型 ID";
+      if (!candidateModel || !/区域|region/i.test(detail)) { setMessage(`${provider.title} 连接失败：${detail}`); }
+      else {
+        // 区域限制在密钥校验前生效：再用默认（区域可用）模型测一次，把"服务连通性"与"所选模型可用性"分开呈现
+        try {
+          const fallback = await runTest({});
+          setMessage(`${provider.title} 连接失败：模型 ${candidateModel} 在当前区域不可用，但服务本身连通正常（默认模型 ${fallback.modelId} 测试成功）。请在"模型分配"中改用 DeepSeek、Kimi、Qwen 等本区域可用模型。`);
+        } catch (fallbackError) {
+          const fallbackBody = fallbackError instanceof ApiError ? fallbackError.body as { message?: string } : undefined;
+          setMessage(`${provider.title} 连接失败：${detail}（改用默认模型重试：${fallbackBody?.message ?? "仍然失败"}）`);
+        }
+      }
     } finally { setBusy(undefined); }
   };
   const saveRuntime = async () => {
