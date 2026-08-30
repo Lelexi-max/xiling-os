@@ -57,6 +57,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .aui-message { max-width: 760px; font-size: var(--hf-body); line-height: 1.7; }
 .aui-message.user { max-width: 620px; }
 .aui-message small { font-size: var(--hf-caption); }
+.chat-running-indicator { display: flex; align-items: center; gap: 10px; max-width: 760px; margin: 4px 0 8px; padding: 10px 14px; border-radius: 10px; color: #3c6c93; background: #eef5fb; font-size: var(--hf-body); }
+.chat-running-indicator i { width: 9px; height: 9px; border-radius: 50%; background: #3f8ed6; animation: chat-running-pulse 1.1s ease-in-out infinite; }
+@keyframes chat-running-pulse { 0%, 100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
+.chat-choice-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 760px; margin: 2px 0 10px; }
+.chat-choice-chips small { color: #8b96a4; font-size: var(--hf-caption); }
+.chat-choice-chips button { padding: 7px 13px; border: 1px solid #a8c8e8; border-radius: 999px; color: #255e9e; background: #f4f9ff; font-size: var(--hf-body); transition: background .15s ease; }
+.chat-choice-chips button:hover { background: #e2efff; border-color: #7fb0dd; }
 .chat-composer { width: calc(100% - 36px); max-width: 780px; border-radius: 13px; }
 .chat-composer textarea { min-height: 62px; font-size: var(--hf-body); line-height: 1.55; }
 .agent-activity { max-width: 780px; overflow-x: auto; min-height: 36px; align-items: center; white-space: nowrap; }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FC } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react";
 import type { AgentInputAttachment, ChatMessageRecord, ContextAssemblyTrace, ResearchProject, ModelCatalogEntry, ModelProviderId, ModelRuntimeStatus, ProjectItem, WikiPageDetail } from "@xiling/contracts";
 import type { ProjectResearchWorkflow } from "@xiling/domain-ocean";
 import { useConversations } from "../workspace/ConversationContext.js";
@@ -31,10 +31,14 @@ type UiMessage = {
 const welcomeMessage = (project: ResearchProject): UiMessage => ({ id: `welcome-${project.id}`, role: "assistant", text: `已进入项目“${project.name}”。当前研究问题：${project.researchQuestion}`, status: "complete" });
 type ToolActivity = { callId: string; name: string; status: "running" | "complete" | "failed" };
 
+const CHOICE_FENCE_COMPLETE = /```xiling-choices\s*\n([\s\S]*?)```/g;
+const CHOICE_FENCE_PARTIAL = /```xiling-choices[\s\S]*$/;
+const stripChoiceFence = (text: string) => text.replace(CHOICE_FENCE_COMPLETE, "").replace(CHOICE_FENCE_PARTIAL, "").trimEnd();
+
 const convertMessage = (message: UiMessage): ThreadMessageLike => ({
   id: message.id,
   role: message.role,
-  content: [{ type: "text", text: message.text }, ...(message.attachments ?? []).map((attachment) => ({ type: "image" as const, image: attachment.url, filename: attachment.name }))],
+  content: [{ type: "text", text: message.role === "assistant" ? stripChoiceFence(message.text) : message.text }, ...(message.attachments ?? []).map((attachment) => ({ type: "image" as const, image: attachment.url, filename: attachment.name }))],
   ...(message.role === "assistant"
     ? {
         status:
@@ -133,14 +137,19 @@ export function ChatView({ project }: { project: ResearchProject }) {
     else if (artifactCount === 0 && !manualArtifactOpenRef.current) setArtifactOpen(false);
     seenArtifactCountRef.current = artifactCount;
   }, [artifactCount]);
+  const lastCompleteAssistantText = useMemo(() => [...messages].reverse().find((message) => message.role === "assistant" && message.status === "complete")?.text ?? "", [messages]);
+  const choiceOptions = useMemo(() => {
+    if (running) return [];
+    const match = /```xiling-choices\s*\n([\s\S]*?)```/.exec(lastCompleteAssistantText);
+    if (!match) return [];
+    try {
+      const parsed = JSON.parse(match[1]!) as unknown;
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).slice(0, 4) : [];
+    } catch { return []; }
+  }, [running, lastCompleteAssistantText]);
 
-  const runtime = useExternalStoreRuntime({
-    messages,
-    isRunning: running,
-    convertMessage,
-    onNew: async (message) => {
-      const prompt = extractText(message.content);
-      const images = pendingImages;
+  const submitPrompt = useCallback(async (prompt: string, images: PendingNativeImage[]) => {
+    {
       const userId = crypto.randomUUID();
       const assistantId = crypto.randomUUID();
       const session = await ensureSession(prompt);
@@ -209,7 +218,13 @@ export function ChatView({ project }: { project: ResearchProject }) {
           }
         }
       }
-    },
+    }
+  }, [project, ensureSession, refreshSessions, selectedModelKey, modelRuntime]);
+  const runtime = useExternalStoreRuntime({
+    messages,
+    isRunning: running,
+    convertMessage,
+    onNew: async (message) => { await submitPrompt(extractText(message.content), pendingImages); },
     onCancel: async () => runAbortRef.current?.abort(),
   });
 
@@ -289,6 +304,8 @@ export function ChatView({ project }: { project: ResearchProject }) {
           {primaryMode === "execution" ? <AgentExecutionGraphView projectId={project.id} activeSessionId={activeSessionId} refreshKey={graphRefreshKey} onReturnToChat={() => switchPrimaryMode("conversation")} /> : <>
             <ThreadPrimitive.Viewport className="aui-thread">
               <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
+              {!running && choiceOptions.length ? <div className="chat-choice-chips" role="group" aria-label="可选操作"><small>你可以直接点击：</small>{choiceOptions.map((label) => <button key={label} onClick={() => void submitPrompt(label, [])}>{label}</button>)}</div> : null}
+              {running ? <div className="chat-running-indicator" role="status" aria-live="polite"><i /><span>{(() => { const active = [...tools].reverse().find((tool) => tool.status === "running"); return active ? `正在处理 · 调用 ${active.name}…` : tools.length ? `正在处理 · ${tools.filter((item) => item.status === "complete").length}/${tools.length} 个工具已完成…` : "正在思考…"; })()}</span></div> : null}
               {workflows.length ? <div className="chat-workflows">{workflows.map((workflow) => <ResearchWorkflowCard key={workflow.id} workflow={workflow} onChange={(updated) => setWorkflows((current) => current.map((item) => item.id === updated.id ? updated : item))} />)}</div> : null}
             </ThreadPrimitive.Viewport>
             <div className="agent-activity"><span>⌁ {project.name}</span>{activeSession?.canvasContext ? <span title={`活动科研实体：${activeSession.canvasContext.activeNodeId}`}>科研图上下文 · {activeSession.canvasContext.activeNodeId}{activeSession.canvasContext.quotedNodeIds.length ? ` · 显式引用 ${activeSession.canvasContext.quotedNodeIds.length}` : ""}</span> : <span>项目研究问题上下文</span>}{contextTrace ? <span title={`精确实体：${contextTrace.exactNodeIds.join(", ") || "无"}\nCapsule 实体：${contextTrace.capsuleNodeIds.join(", ") || "无"}\n能力：${contextTrace.activatedCapabilityIds.join(", ") || "无"}\nSkill：${contextTrace.activatedSkillNames.join(", ") || "无"}`}>{contextTrace.exactNodeIds.length} 精确实体 · {contextTrace.capsuleNodeIds.length} 胶囊 · {contextTrace.activatedSkillNames.length} Skill · {contextTrace.cache === "hit" ? "组装缓存" : "新投影"}</span> : null}<span>{tools.length ? `${tools.filter((item) => item.status === "complete").length}/${tools.length} 个工具完成` : "按需工具未激活"}</span><span>{running ? "Pi 正在执行" : "Pi 已就绪"}</span></div>
