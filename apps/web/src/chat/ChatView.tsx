@@ -73,6 +73,8 @@ export function ChatView({ project }: { project: ResearchProject }) {
   const visibleSessionRef = useRef(activeSessionId);
   visibleSessionRef.current = activeSessionId;
   const runAbortRef = useRef<AbortController | null>(null);
+  // 当前运行所属会话：会话恢复 effect 据此避免用耐久记录覆盖进行中的乐观流式消息
+  const runSessionIdRef = useRef<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const activeSession = sessions.find((session) => session.id === activeSessionId);
   const [messages, setMessages] = useState<UiMessage[]>(() => [welcomeMessage(project)]);
@@ -100,16 +102,22 @@ export function ChatView({ project }: { project: ResearchProject }) {
   const workbenchRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let cancelled = false;
-    runAbortRef.current = null;
-    setRunning(false);
+    const inFlightRunForSession = () => runSessionIdRef.current === activeSessionId && runAbortRef.current !== null;
+    // 新会话由 submitPrompt 的 ensureSession 创建时，本 effect 会与乐观插入竞态；
+    // 该会话存在进行中的运行时，跳过恢复性覆盖，由运行结束后的耐久重取接管。
+    const isRunSession = runSessionIdRef.current !== null && runSessionIdRef.current === activeSessionId;
+    if (!isRunSession) {
+      runAbortRef.current = null;
+      setRunning(false);
+    }
     if (activeSessionId) {
       setMessages([welcomeMessage(project)]);
       void fetch(`/api/v1/chat-sessions/${encodeURIComponent(activeSessionId)}/messages`).then(async (response) => {
         if (!response.ok) throw new Error(`会话消息加载失败：${response.status}`);
         const records = await response.json() as ChatMessageRecord[];
         const restored: UiMessage[] = [welcomeMessage(project), ...records.map((record) => ({ id: record.id, role: record.role, text: record.text, status: record.status, sourceEntryId: record.id, ...(record.attachments?.length ? { attachments: record.attachments.map((attachment) => ({ ...attachment, url: `/api/agent-center/attachments/${encodeURIComponent(attachment.id)}?projectId=${encodeURIComponent(project.id)}` })) } : {}) }))];
-        if (!cancelled && visibleSessionRef.current === activeSessionId) setMessages(restored);
-      }).catch(() => { if (!cancelled) setMessages([welcomeMessage(project), { id: `restore-error-${activeSessionId}`, role: "assistant", text: "这段对话暂时无法恢复，请稍后重试。", status: "cancelled" }]); });
+        if (!cancelled && visibleSessionRef.current === activeSessionId && !inFlightRunForSession()) setMessages(restored);
+      }).catch(() => { if (!cancelled && !inFlightRunForSession()) setMessages([welcomeMessage(project), { id: `restore-error-${activeSessionId}`, role: "assistant", text: "这段对话暂时无法恢复，请稍后重试。", status: "cancelled" }]); });
     } else {
       setMessages([welcomeMessage(project)]);
     }
@@ -153,6 +161,7 @@ export function ChatView({ project }: { project: ResearchProject }) {
       const userId = crypto.randomUUID();
       const assistantId = crypto.randomUUID();
       const session = await ensureSession(prompt);
+      runSessionIdRef.current = session.id;
       visibleSessionRef.current = session.id;
       setMessages((current) => [
         ...current,
@@ -203,6 +212,7 @@ export function ChatView({ project }: { project: ResearchProject }) {
         updateVisibleMessages((current) => current.map((item) => item.id === assistantId ? { ...item, text: item.text || (cancelled ? "已取消" : `连接失败：${reason}`), status: "cancelled" } : item));
       } finally {
         if (runAbortRef.current === controller) runAbortRef.current = null;
+        runSessionIdRef.current = null;
         if (visibleSessionRef.current === session.id) setRunning(false);
         await refreshSessions(session.id);
         setGraphRefreshKey((value) => value + 1);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { defaultValueCtx, Editor, editorViewOptionsCtx, rootCtx } from "@milkdown/kit/core";
+import { defaultValueCtx, Editor, editorViewCtx, editorViewOptionsCtx, parserCtx, rootCtx } from "@milkdown/kit/core";
 import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { history } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
@@ -245,6 +245,11 @@ function MilkdownDocument({ markdown, editable, onChange, onOpenWikiLink }: { ma
   const root = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
   const onOpenWikiLinkRef = useRef(onOpenWikiLink);
+  const editorRef = useRef<Editor | null>(null);
+  const readyRef = useRef<Promise<void> | null>(null);
+  // 编辑器自身触发的回写不再替换内容，否则每个按键都会销毁重建 ProseMirror
+  const lastEmittedRef = useRef<string | null>(null);
+  const createdWithRef = useRef<string | null>(null);
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
   useEffect(() => { onOpenWikiLinkRef.current = onOpenWikiLink; }, [onOpenWikiLink]);
   useEffect(() => {
@@ -254,11 +259,13 @@ function MilkdownDocument({ markdown, editable, onChange, onOpenWikiLink }: { ma
       ctx.set(rootCtx, root.current);
       ctx.set(defaultValueCtx, markdown);
       ctx.set(editorViewOptionsCtx, editable ? { attributes: { "aria-label": "Wiki 正文编辑器" } } : { editable: () => false, attributes: { "aria-label": "Wiki 正文" } });
-      ctx.get(listenerCtx).markdownUpdated((_ctx, value, previous) => { if (editable && value !== previous) onChangeRef.current(value); });
+      ctx.get(listenerCtx).markdownUpdated((_ctx, value, previous) => { if (editable && value !== previous) { lastEmittedRef.current = value; onChangeRef.current(value); } });
     }).use(commonmark).use(history).use(listener);
-    void editor.create().then(() => {
+    editorRef.current = editor;
+    createdWithRef.current = markdown;
+    readyRef.current = editor.create().then(() => {
       if (cancelled || !root.current) return;
-      root.current.querySelectorAll("h1, h2, h3").forEach((heading, index) => { heading.id = `wiki-section-${index}`; });
+      applyWikiHeadingIds(root.current);
     });
     const handleClick = (event: MouseEvent) => {
       const anchor = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href^="#wiki/"]');
@@ -267,9 +274,32 @@ function MilkdownDocument({ markdown, editable, onChange, onOpenWikiLink }: { ma
       onOpenWikiLinkRef.current(decodeURIComponent(anchor.hash.slice("#wiki/".length)));
     };
     root.current.addEventListener("click", handleClick);
-    return () => { cancelled = true; root.current?.removeEventListener("click", handleClick); void editor.destroy(); };
-  }, [editable, markdown]);
+    return () => { cancelled = true; editorRef.current = null; readyRef.current = null; lastEmittedRef.current = null; createdWithRef.current = null; root.current?.removeEventListener("click", handleClick); void editor.destroy(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editable]);
+  useEffect(() => {
+    if (lastEmittedRef.current === markdown || createdWithRef.current === markdown) return;
+    const editor = editorRef.current;
+    const ready = readyRef.current;
+    if (!editor || !ready) return;
+    void ready.then(() => {
+      if (editorRef.current !== editor || !root.current) return;
+      try {
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const doc = ctx.get(parserCtx)(markdown);
+          if (!doc) return;
+          view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content));
+        });
+        applyWikiHeadingIds(root.current);
+      } catch { /* 编辑器可能在销毁中，忽略 */ }
+    });
+  }, [markdown]);
   return <div className={`wiki-milkdown ${editable ? "is-editing" : "is-reading"}`} ref={root} />;
+}
+
+function applyWikiHeadingIds(root: HTMLElement) {
+  root.querySelectorAll("h1, h2, h3").forEach((heading, index) => { heading.id = `wiki-section-${index}`; });
 }
 
 const overviewHeadings: Heading[] = [
