@@ -393,7 +393,8 @@ const preferredModels: Record<ModelProviderId, string[]> = {
   openai: ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"],
   anthropic: ["claude-sonnet-5", "claude-opus-5", "claude-sonnet-4-6", "claude-opus-4-8", "claude-haiku-4-5"],
   google: ["gemini-3.7-flash", "gemini-3.5-pro", "gemini-pro-latest", "gemini-flash-latest", "gemini-3.5-flash-lite"],
-  openrouter: ["~anthropic/claude-sonnet-latest", "~google/gemini-pro-latest", "~google/gemini-flash-latest", "~openai/gpt-latest", "~openai/gpt-mini-latest", "~moonshotai/kimi-latest"],
+  // 区域可用性优先：连接测试与默认推荐取列表首项，DeepSeek/Kimi 在受限区域可直连，西方模型部分有区域限制
+  openrouter: ["~deepseek/deepseek-v4-flash-latest", "~moonshotai/kimi-latest", "~anthropic/claude-sonnet-latest", "~google/gemini-pro-latest", "~google/gemini-flash-latest", "~openai/gpt-latest", "~openai/gpt-mini-latest"],
   deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
   xai: ["grok-4.6", "grok-4.5"],
   mistral: ["mistral-large-latest", "mistral-small-latest"],
