@@ -9,6 +9,7 @@ export function humanizeModelFailure(message: string): string {
   const lower = message.toLowerCase();
   if (lower.includes("guardrail restrictions") || lower.includes("settings/privacy")) return "已连接 OpenRouter，但账户隐私/数据策略没有允许该模型的可用端点；请检查 OpenRouter Privacy 设置或更换模型。";
   if (/\b401\b|unauthorized|invalid api key/.test(lower)) return "认证失败：API Key 无效、已过期或没有访问该模型的权限。";
+  if (/\b403\b|not available in your region/.test(lower)) return "该模型在当前区域被限制访问（区域检查发生在密钥校验之前，因此无法据此判断密钥是否有效）；请改用 DeepSeek、Kimi、Qwen 等本区域可用模型重试。";
   if (/\b404\b|model not found|unknown model/.test(lower)) return "服务可达，但模型 ID 不存在或当前账户不可用。";
   if (/\b429\b|rate limit|quota/.test(lower)) return "服务可达，但当前配额不足或请求频率受限。";
   return message.slice(0, 500);
