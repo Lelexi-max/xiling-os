@@ -2085,3 +2085,26 @@
 .scientific-markdown a:hover {
   text-decoration: underline;
 }
+
+/* 输入框发送/取消按钮：与工具行同行右对齐（修复按钮竖排堆叠） */
+.composer-tools { justify-content: flex-start; }
+.composer-tools .composer-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.composer-actions button {
+  width: 34px; height: 34px; padding: 0; border: 0; border-radius: 10px;
+  background: var(--lx-primary); color: #fff; font-size: 15px; line-height: 1;
+  cursor: pointer; transition: opacity 0.1s;
+}
+.composer-actions button:hover:not(:disabled) { opacity: 0.88; background: var(--lx-primary); color: #fff; }
+.composer-actions button:disabled { background: #b7c4cd; color: #fff; opacity: 1; }
+.composer-actions button[aria-label="取消"] { background: #8a9aa5; }
+
+/* ─── 产出面板内执行图适配（修复标题竖排与输入条悬浮遮挡） ─── */
+.output-panel .agent-execution-graph { position: relative; display: flex; flex-direction: column; gap: 0; height: 100%; }
+.output-panel .execution-graph-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; }
+.output-panel .execution-graph-head > div:first-child { display: flex; align-items: baseline; gap: 8px; min-width: 0; white-space: nowrap; }
+.output-panel .execution-graph-head b { white-space: nowrap; }
+.output-panel .execution-graph-head > div:first-child span { white-space: normal; }
+.output-panel .execution-graph-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.output-panel .execution-canvas-composer { position: static; width: auto; transform: none; margin: 10px 14px 14px; }
+.output-panel .execution-canvas-composer textarea { min-height: 40px; }
+.output-panel .execution-reference-tray button { max-width: 100%; }

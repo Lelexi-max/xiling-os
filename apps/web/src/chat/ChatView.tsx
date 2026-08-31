@@ -328,9 +328,7 @@ export function ChatView({ project }: { project: ResearchProject }) {
             {attachmentError ? <div className="native-attachment-error">{attachmentError}</div> : null}
             <ComposerPrimitive.Input placeholder="询问数据、文献或当前科研图选择…" />
             <input ref={imageInputRef} className="native-file-input" type="file" accept={NATIVE_IMAGE_ACCEPT} multiple onChange={(event) => { void addImages(event.currentTarget.files); event.currentTarget.value = ""; }} />
-            <div className="composer-tools"><button type="button" aria-label="添加图像" disabled={!nativeImageEnabled || running} title={attachmentTitle} onClick={() => imageInputRef.current?.click()}>＋</button><span>{nativeImageEnabled ? "原生图像可用" : "仅原生模态"}</span></div>
-            <ComposerPrimitive.Send aria-label="发送">↑</ComposerPrimitive.Send>
-            <ComposerPrimitive.Cancel aria-label="取消">■</ComposerPrimitive.Cancel>
+            <div className="composer-tools"><button type="button" aria-label="添加图像" disabled={!nativeImageEnabled || running} title={attachmentTitle} onClick={() => imageInputRef.current?.click()}>＋</button><span>{nativeImageEnabled ? "原生图像可用" : "仅原生模态"}</span><div className="composer-actions"><ComposerPrimitive.Send aria-label="发送">↑</ComposerPrimitive.Send><ComposerPrimitive.Cancel aria-label="取消">■</ComposerPrimitive.Cancel></div></div>
             </ComposerPrimitive.Root>
             <p className="adapter-note">回答可能有误，请核对数据来源与科研结论</p>
           </>}
