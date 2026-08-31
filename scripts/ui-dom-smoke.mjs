@@ -42,6 +42,12 @@ const browser = await playwright.chromium.launch();
 const page = await browser.newPage();
 const pageErrors = [];
 page.on("pageerror", (error) => pageErrors.push(String(error?.message ?? error)));
+// 提前注入错误捕获，拿到触发 index.html 崩溃屏的原始错误信息
+await page.addInitScript(() => {
+  window.__smokeErrors = [];
+  window.addEventListener("error", (event) => { window.__smokeErrors.push(String(event.message ?? event)); });
+  window.addEventListener("unhandledrejection", (event) => { window.__smokeErrors.push(`unhandledrejection: ${String(event.reason?.message ?? event.reason)}`); });
+});
 
 try {
   await page.goto(baseUrl, { waitUntil: "load" });
@@ -54,6 +60,8 @@ try {
   if (failures.length) {
     console.error("ui-dom-smoke 失败：");
     for (const failure of failures) console.error(` - ${failure}`);
+    const injected = await page.evaluate(() => window.__smokeErrors ?? []).catch(() => []);
+    for (const message of injected ?? []) console.error(` - 页面捕获错误：${message}`);
     const crashDetail = await page.evaluate(() => document.querySelector("#root pre")?.textContent ?? "").catch(() => "");
     if (crashDetail) console.error(` - 崩溃详情：${crashDetail}`);
     process.exitCode = 1;
