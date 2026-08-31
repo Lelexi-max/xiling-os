@@ -2085,3 +2085,21 @@
 .scientific-markdown a:hover {
   text-decoration: underline;
 }
+
+/* 输入框发送/取消按钮：与工具行同行右对齐（修复按钮竖排堆叠）。
+   按钮配色沿用下方 [data-component="composer-send"/"composer-cancel"] 既有规则。 */
+.composer-tools { justify-content: flex-start; }
+.composer-tools .composer-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.composer-actions button { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 10px; font-size: 15px; line-height: 1; }
+.composer-actions button:disabled { opacity: 0.45; }
+
+/* ─── 产出面板内执行图适配（修复标题竖排与输入条悬浮遮挡） ─── */
+.output-panel .agent-execution-graph { position: relative; display: flex; flex-direction: column; gap: 0; height: 100%; }
+.output-panel .execution-graph-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; }
+.output-panel .execution-graph-head > div:first-child { display: flex; align-items: baseline; gap: 8px; min-width: 0; white-space: nowrap; }
+.output-panel .execution-graph-head b { white-space: nowrap; }
+.output-panel .execution-graph-head > div:first-child span { white-space: normal; }
+.output-panel .execution-graph-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.output-panel .execution-canvas-composer { position: static; width: auto; transform: none; margin: 10px 14px 14px; }
+.output-panel .execution-canvas-composer textarea { min-height: 40px; }
+.output-panel .execution-reference-tray button { max-width: 100%; }

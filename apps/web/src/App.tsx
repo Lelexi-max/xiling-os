@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { FREE_EXPLORATION_PROJECT_ID } from "@xiling/contracts";
 import { WorkspaceProvider, useWorkspace } from "./workspace/WorkspaceContext.js";
 import { ConversationProvider, useConversations } from "./workspace/ConversationContext.js";
 
@@ -72,6 +73,16 @@ function WorkspaceApp() {
         <div className="sidebar-brand">
           <div className="brand-mark"><img src="/brand/xiling-mark.png" alt="" /></div>
           <div className="brand-text"><b>汐灵</b><small>OCEAN SCIENCE</small></div>
+        </div>
+        <div className="project-switcher" ref={projectMenuRef}>
+          <button className="project-switcher-trigger" aria-expanded={projectMenuOpen} onClick={() => setProjectMenuOpen((open) => !open)}>
+            <span><small>当前项目</small><b>{activeProject.name}{activeProject.id === FREE_EXPLORATION_PROJECT_ID ? <em className="project-badge-free">开放问答</em> : null}</b><em>{activeProject.researchQuestion}</em></span><i>⌄</i>
+          </button>
+          {projectMenuOpen ? <div className="project-switcher-menu">
+            <header><b>科研项目</b><small>{projects.length} 个进行中</small></header>
+            <div>{[...projects].sort((a, b) => (a.id === FREE_EXPLORATION_PROJECT_ID ? -1 : b.id === FREE_EXPLORATION_PROJECT_ID ? 1 : 0)).map((project) => <button className={project.id === activeProjectId ? "active" : ""} key={project.id} onClick={() => { setActiveProjectId(project.id); setProjectMenuOpen(false); }}><i>{project.id === activeProjectId ? "✓" : ""}</i><span><b>{project.name}{project.id === FREE_EXPLORATION_PROJECT_ID ? <em className="project-badge-free">开放问答</em> : null}</b><small>{project.researchQuestion}</small></span></button>)}</div>
+            <footer><button onClick={() => { setView("project"); setProjectMenuOpen(false); }}>＋ 新建或管理项目</button></footer>
+          </div> : null}
         </div>
         <nav className="sidebar-nav">
           {navigationGroups.map((group) => (
@@ -158,9 +169,9 @@ function WorkspaceApp() {
           </section>
           <section>
             <small>科研项目</small>
-            {projects.filter((project) => `${project.name} ${project.researchQuestion}`.toLocaleLowerCase().includes(commandQuery.trim().toLocaleLowerCase()) || !commandQuery.trim()).map((project) => (
+            {[...projects].sort((a, b) => (a.id === FREE_EXPLORATION_PROJECT_ID ? -1 : b.id === FREE_EXPLORATION_PROJECT_ID ? 1 : 0)).filter((project) => `${project.name} ${project.researchQuestion}`.toLocaleLowerCase().includes(commandQuery.trim().toLocaleLowerCase()) || !commandQuery.trim()).map((project) => (
               <button key={project.id} onClick={() => { setActiveProjectId(project.id); setCommandOpen(false); setCommandQuery(""); }}>
-                <span>◎ {project.name}</span>
+                <span>◎ {project.name}{project.id === FREE_EXPLORATION_PROJECT_ID ? <em className="project-badge-free">开放问答</em> : null}</span>
                 <em>{project.id === activeProjectId ? "当前" : "切换"}</em>
               </button>
             ))}
