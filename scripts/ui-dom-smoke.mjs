@@ -54,6 +54,8 @@ try {
   if (failures.length) {
     console.error("ui-dom-smoke 失败：");
     for (const failure of failures) console.error(` - ${failure}`);
+    const crashDetail = await page.evaluate(() => document.querySelector("#root pre")?.textContent ?? "").catch(() => "");
+    if (crashDetail) console.error(` - 崩溃详情：${crashDetail}`);
     process.exitCode = 1;
   } else {
     console.log("ui-dom-smoke 通过：首页正常渲染，无未捕获错误。");
