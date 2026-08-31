@@ -22,6 +22,13 @@ try {
 const mimeTypes = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".woff2": "font/woff2" };
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  // 冒烟环境没有后端：给前端启动所需的 API 提供最小桩，让应用渲染空状态而不是崩溃。
+  if (url.pathname.startsWith("/api/")) {
+    response.setHeader("content-type", "application/json");
+    if (url.pathname === "/api/v1/projects") return response.end("[]");
+    if (url.pathname === "/api/settings/models") return response.end(JSON.stringify({ runtime: { mode: "offline", ready: false }, catalog: [], configuredProviderIds: [] }));
+    return response.end("[]");
+  }
   let filePath = join(distRoot, normalize(url.pathname).replace(/^[/\\]+/, ""));
   if (!filePath.startsWith(distRoot) || !existsSync(filePath) || statSync(filePath).isDirectory()) filePath = join(distRoot, "index.html");
   response.setHeader("content-type", mimeTypes[extname(filePath)] ?? "application/octet-stream");
