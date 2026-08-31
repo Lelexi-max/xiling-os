@@ -60,6 +60,8 @@ try {
   if (failures.length) {
     console.error("ui-dom-smoke 失败：");
     for (const failure of failures) console.error(` - ${failure}`);
+    const bodySnippet = (await page.textContent("body")) ?? "";
+    console.error(` - 页面内容前 400 字符：${bodySnippet.slice(0, 400)}`);
     const injected = await page.evaluate(() => window.__smokeErrors ?? []).catch(() => []);
     for (const message of injected ?? []) console.error(` - 页面捕获错误：${message}`);
     const crashDetail = await page.evaluate(() => document.querySelector("#root pre")?.textContent ?? "").catch(() => "");
