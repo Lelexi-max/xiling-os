@@ -52,10 +52,11 @@ await page.addInitScript(() => {
 try {
   await page.goto(baseUrl, { waitUntil: "load" });
   await page.waitForTimeout(4000);
-  const bodyText = (await page.textContent("body")) ?? "";
+  // 只检查 #root 的渲染内容（body 的 textContent 会包含 index.html 内联脚本的源码，造成误报）
+  const rootText = (await page.textContent("#root")) ?? "";
   const failures = [];
-  if (bodyText.includes("无法启动当前视图")) failures.push("首页渲染了启动失败错误边界");
-  if (bodyText.trim().length < 10) failures.push("首页内容为空");
+  if (rootText.includes("无法启动当前视图")) failures.push("首页渲染了启动失败错误边界");
+  if (rootText.trim().length < 10) failures.push("首页内容为空");
   if (pageErrors.length) failures.push(`页面出现未捕获错误：${pageErrors.join(" | ")}`);
   if (failures.length) {
     console.error("ui-dom-smoke 失败：");
