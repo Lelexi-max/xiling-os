@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Background,
   Controls,
@@ -216,11 +216,9 @@ export function AgentExecutionGraphView({ projectId, activeSessionId, refreshKey
   const [quotedNodeIds, setQuotedNodeIds] = useState<string[]>([]);
   const quotedNodeIdsRef = useRef<string[]>([]);
   const [inspected, setInspected] = useState<AgentExecutionNode>();
-  const [draft, setDraft] = useState("");
   const [nodes, setNodes, onNodesChange] = useNodesState<ConversationNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<ConversationEdge>([]);
   const flow = useRef<ReactFlowInstance<ConversationNode, ConversationEdge> | null>(null);
-  const composer = unstable_useComposerInput();
 
   useEffect(() => { if (activeSessionId) setScope("session"); }, [activeSessionId]);
   const fit = useCallback(() => { window.setTimeout(() => void flow.current?.fitView({ padding: 0.22, duration: 260, maxZoom: 1.08 }), 40); }, []);
@@ -276,18 +274,6 @@ export function AgentExecutionGraphView({ projectId, activeSessionId, refreshKey
     applyFocus("", next);
   }, [applyFocus]);
   const clearSelection = useCallback(() => { setActiveNodeId(""); setQuotedNodeIds([]); quotedNodeIdsRef.current = []; applyFocus("", []); }, [applyFocus]);
-  const references = useMemo(() => {
-    const ids = interactionMode === "follow-up" ? [activeNodeId].filter(Boolean) : quotedNodeIds;
-    return ids.map((id) => nodes.find((node) => node.id === id)).filter((node): node is ConversationNode => Boolean(node));
-  }, [nodes, activeNodeId, quotedNodeIds, interactionMode]);
-
-  const submitFromCanvas = () => {
-    if (!draft.trim() || composer.isDisabled) return;
-    const context = references.length ? `\n\n参考的 Agent 节点：\n${references.map((node, index) => `${index + 1}. [${displayLabel[node.data.displayKind]}] ${node.data.summary}`).join("\n")}` : "";
-    composer.setText(`${draft.trim()}${context}`);
-    queueMicrotask(() => composer.send());
-    setDraft("");
-  };
 
   const turns = nodes.filter((node) => node.data.displayKind === "prompt").length;
   return (
@@ -327,13 +313,61 @@ export function AgentExecutionGraphView({ projectId, activeSessionId, refreshKey
           zoomOnScroll={false}
           fitView
         ><Background color="#dde3e8" gap={34} size={1} /><Controls position="bottom-left" /></ReactFlow> : <div className="execution-graph-empty"><b>这段对话还没有运行节点</b><span>回到对话发送研究问题后，这里会形成可继续和引用的脉络。</span></div>}
-        <div className="execution-canvas-composer">
-          {references.length ? <div className="execution-reference-tray">{references.map((node) => <button key={node.id} onClick={() => interactionMode === "follow-up" ? clearSelection() : quote(node.id)}><span>{displayLabel[node.data.displayKind]}</span>{node.data.summary}<i>×</i></button>)}</div> : null}
-          <div><textarea value={draft} disabled={composer.isDisabled} placeholder={interactionMode === "follow-up" ? references.length ? "从这个节点继续追问…" : "选择一个节点，或直接提出下一步…" : references.length ? "综合这些节点提出问题…" : "选择多个节点作为引用…"} onChange={(event) => { setDraft(event.target.value); composer.setText(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitFromCanvas(); } }} /><button aria-label="从运行画布发送" disabled={!draft.trim() || composer.isDisabled} onClick={submitFromCanvas}>↑</button></div>
-          <footer><span>{interactionMode === "follow-up" ? "点击节点继承该路径" : "点击多个节点组合引用"}</span><div>{references.length ? <button onClick={() => setInspected(references.at(-1)!.data.sourceNode)}>查看节点详情</button> : null}{references.length ? <button onClick={clearSelection}>清除选择</button> : null}{onReturnToChat ? <button onClick={onReturnToChat}>返回对话</button> : null}</div></footer>
-        </div>
+        <ComposerBridgeBoundary fallback={<div className="execution-canvas-composer"><div><textarea disabled placeholder="追问输入已停用：当前视图未接入会话上下文，请返回对话页提问…" /><button aria-label="从运行画布发送" disabled>↑</button></div><footer><span>返回对话页可继续追问</span><div /></footer></div>}>
+          <CanvasComposerSection projectId={projectId} activeSessionId={activeSessionId} nodes={nodes} activeNodeId={activeNodeId} quotedNodeIds={quotedNodeIds} interactionMode={interactionMode} displayLabel={displayLabel} onClearSelection={clearSelection} onQuote={quote} onInspect={(sourceNode) => setInspected(sourceNode)} onReturnToChat={onReturnToChat} />
+        </ComposerBridgeBoundary>
       </div>
       {inspected ? <RecordDetailModal eyebrow="AGENT JOURNAL" title={inspected.title} onClose={() => setInspected(undefined)}><div className="execution-node-detail"><p>{inspected.summary}</p><dl><div><dt>类型</dt><dd>{inspected.kind}</dd></div><div><dt>状态</dt><dd>{inspected.status ?? "recorded"}</dd></div><div><dt>时间</dt><dd>{new Date(inspected.timestamp).toLocaleString("zh-CN", { hour12: false })}</dd></div><div><dt>耗时</dt><dd>{formatDuration(inspected.metrics?.durationMs)}</dd></div><div><dt>Tokens</dt><dd>{inspected.metrics?.totalTokens?.toLocaleString() ?? "—"}</dd></div><div><dt>Run</dt><dd>{inspected.source.runId ?? "—"}</dd></div></dl></div></RecordDetailModal> : null}
     </section>
+  );
+}
+
+type ComposerBridgeBoundaryState = { unavailable: boolean; rethrow?: unknown };
+
+/** 画布追问输入依赖 assistant-ui 的 AuiProvider；三栏布局下本视图可能渲染在 Provider 外，此时降级为禁用态而不是崩溃。 */
+class ComposerBridgeBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, ComposerBridgeBoundaryState> {
+  state: ComposerBridgeBoundaryState = { unavailable: false };
+  static getDerivedStateFromError(error: unknown): ComposerBridgeBoundaryState | null {
+    if (error instanceof Error && /AuiProvider/i.test(error.message)) return { unavailable: true };
+    return { unavailable: false, rethrow: error };
+  }
+  render() {
+    if (this.state.rethrow) throw this.state.rethrow;
+    return this.state.unavailable ? <div className="execution-canvas-composer"><div><textarea disabled placeholder="追问输入已停用：当前视图未接入会话上下文，请返回对话页提问…" /><button aria-label="从运行画布发送" disabled>↑</button></div><footer><span>返回对话页可继续追问</span><div /></footer></div> : this.props.children;
+  }
+}
+
+function CanvasComposerSection({ nodes, activeNodeId, quotedNodeIds, interactionMode, displayLabel, onClearSelection, onQuote, onInspect, onReturnToChat }: {
+  projectId: string;
+  activeSessionId?: string;
+  nodes: ConversationNode[];
+  activeNodeId: string;
+  quotedNodeIds: string[];
+  interactionMode: InteractionMode;
+  displayLabel: Record<ConversationDisplayKind, string>;
+  onClearSelection: () => void;
+  onQuote: (id: string) => void;
+  onInspect: (sourceNode: AgentExecutionNode) => void;
+  onReturnToChat: (() => void) | undefined;
+}) {
+  const [draft, setDraft] = useState("");
+  const composer = unstable_useComposerInput();
+  const references = useMemo(() => {
+    const ids = interactionMode === "follow-up" ? [activeNodeId].filter(Boolean) : quotedNodeIds;
+    return ids.map((id) => nodes.find((node) => node.id === id)).filter((node): node is ConversationNode => Boolean(node));
+  }, [nodes, activeNodeId, quotedNodeIds, interactionMode]);
+  const submitFromCanvas = () => {
+    if (!draft.trim() || composer.isDisabled) return;
+    const context = references.length ? `\n\n参考的 Agent 节点：\n${references.map((node, index) => `${index + 1}. [${displayLabel[node.data.displayKind]}] ${node.data.summary}`).join("\n")}` : "";
+    composer.setText(`${draft.trim()}${context}`);
+    queueMicrotask(() => composer.send());
+    setDraft("");
+  };
+  return (
+    <div className="execution-canvas-composer">
+      {references.length ? <div className="execution-reference-tray">{references.map((node) => <button key={node.id} onClick={() => interactionMode === "follow-up" ? onClearSelection() : onQuote(node.id)}><span>{displayLabel[node.data.displayKind]}</span>{node.data.summary}<i>×</i></button>)}</div> : null}
+      <div><textarea value={draft} disabled={composer.isDisabled} placeholder={interactionMode === "follow-up" ? references.length ? "从这个节点继续追问…" : "选择一个节点，或直接提出下一步…" : references.length ? "综合这些节点提出问题…" : "选择多个节点作为引用…"} onChange={(event) => { setDraft(event.target.value); composer.setText(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitFromCanvas(); } }} /><button aria-label="从运行画布发送" disabled={!draft.trim() || composer.isDisabled} onClick={submitFromCanvas}>↑</button></div>
+      <footer><span>{interactionMode === "follow-up" ? "点击节点继承该路径" : "点击多个节点组合引用"}</span><div>{references.length ? <button onClick={() => onInspect(references.at(-1)!.data.sourceNode)}>查看节点详情</button> : null}{references.length ? <button onClick={onClearSelection}>清除选择</button> : null}{onReturnToChat ? <button onClick={onReturnToChat}>返回对话</button> : null}</div></footer>
+    </div>
   );
 }
