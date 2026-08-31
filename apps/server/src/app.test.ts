@@ -334,7 +334,8 @@ describe("server vertical slice", () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "xiling-gate4-knowledge-"));
     const first = createApp({ dataRoot });
     const projects = await first.inject({ method: "GET", url: "/api/v1/projects" });
-    expect(projects.json()).toMatchObject([{ id: "ocean-heatwave", status: "active" }]);
+    const projectRows = (projects.json() as Array<{ id: string; status: string }>).sort((a, b) => a.id.localeCompare(b.id));
+    expect(projectRows).toMatchObject([{ id: "free-exploration", status: "active" }, { id: "ocean-heatwave", status: "active" }]);
 
     const item = await first.inject({ method: "POST", url: "/api/v1/project-items", payload: { projectId: "ocean-heatwave", kind: "experiment", title: "敏感性实验", notes: "MLD 阈值" } });
     expect(item.statusCode).toBe(201);

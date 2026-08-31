@@ -2086,17 +2086,12 @@
   text-decoration: underline;
 }
 
-/* 输入框发送/取消按钮：与工具行同行右对齐（修复按钮竖排堆叠） */
+/* 输入框发送/取消按钮：与工具行同行右对齐（修复按钮竖排堆叠）。
+   按钮配色沿用下方 [data-component="composer-send"/"composer-cancel"] 既有规则。 */
 .composer-tools { justify-content: flex-start; }
 .composer-tools .composer-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.composer-actions button {
-  width: 34px; height: 34px; padding: 0; border: 0; border-radius: 10px;
-  background: var(--lx-primary); color: #fff; font-size: 15px; line-height: 1;
-  cursor: pointer; transition: opacity 0.1s;
-}
-.composer-actions button:hover:not(:disabled) { opacity: 0.88; background: var(--lx-primary); color: #fff; }
-.composer-actions button:disabled { background: #b7c4cd; color: #fff; opacity: 1; }
-.composer-actions button[aria-label="取消"] { background: #8a9aa5; }
+.composer-actions button { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 10px; font-size: 15px; line-height: 1; }
+.composer-actions button:disabled { opacity: 0.45; }
 
 /* ─── 产出面板内执行图适配（修复标题竖排与输入条悬浮遮挡） ─── */
 .output-panel .agent-execution-graph { position: relative; display: flex; flex-direction: column; gap: 0; height: 100%; }
