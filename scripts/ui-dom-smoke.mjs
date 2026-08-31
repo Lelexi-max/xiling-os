@@ -51,12 +51,18 @@ await page.addInitScript(() => {
 
 try {
   await page.goto(baseUrl, { waitUntil: "load" });
-  await page.waitForTimeout(4000);
+  // 轮询等待 React 完成首次渲染（CI 机器可能较慢，固定等待会误判「内容为空」）
+  let renderTimedOut = false;
+  try {
+    await page.waitForFunction(() => (document.getElementById("root")?.textContent ?? "").trim().length > 0, null, { timeout: 20000 });
+  } catch {
+    renderTimedOut = true;
+  }
   // 只检查 #root 的渲染内容（body 的 textContent 会包含 index.html 内联脚本的源码，造成误报）
   const rootText = (await page.textContent("#root")) ?? "";
   const failures = [];
+  if (renderTimedOut) failures.push("20 秒内 #root 没有渲染出任何内容");
   if (rootText.includes("无法启动当前视图")) failures.push("首页渲染了启动失败错误边界");
-  if (rootText.trim().length < 10) failures.push("首页内容为空");
   if (pageErrors.length) failures.push(`页面出现未捕获错误：${pageErrors.join(" | ")}`);
   if (failures.length) {
     console.error("ui-dom-smoke 失败：");
