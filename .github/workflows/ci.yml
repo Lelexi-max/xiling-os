@@ -38,6 +38,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22.19.0, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
       - run: pnpm --filter @xiling/web build
       - run: npm install --no-save playwright
       - run: npx playwright install --with-deps chromium
